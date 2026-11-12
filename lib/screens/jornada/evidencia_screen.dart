@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../domain/format.dart';
 import '../../domain/models.dart';
+import '../../platform/device_capture.dart';
 import '../../state/app_controller.dart';
 import '../../state/app_scope.dart';
 import '../../theme/tokens.dart';
@@ -22,26 +23,34 @@ String registerTitle(EventType type) {
   }
 }
 
-/// Captura la evidencia del registro: una lectura de ubicación y una foto
-/// con la cámara frontal. Devuelve la [Evidence] reunida, o `null` si el
-/// usuario canceló.
+/// Lo que se reunió del teléfono para un registro.
+class EvidenceResult {
+  const EvidenceResult({this.location, this.photo});
+  final LocationReading? location;
+  final PhotoCapture? photo;
+}
+
+/// Reúne la evidencia del registro: una lectura de ubicación y una foto con
+/// la cámara frontal, según lo que pida el centro y lo que la persona haya
+/// aceptado. Devuelve un [EvidenceResult], o `null` si la persona canceló.
 ///
-/// Punto de integración: la vista de cámara es un marcador. Aquí va la
-/// cámara frontal real (por ejemplo `camera`); la foto se envía después con
-/// `POST /evidence/photos`.
+/// Nada bloquea: si algo falta, la persona decide si lo intenta de nuevo o
+/// registra sin eso.
 class EvidenciaScreen extends StatefulWidget {
   const EvidenciaScreen({
     super.key,
     required this.type,
-    required this.center,
-    this.qrRead,
+    required this.qrAsked,
+    this.qr,
   });
 
   final EventType type;
-  final WorkCenter center;
 
-  /// Resultado del paso de QR. `null` si el centro no lo pide.
-  final bool? qrRead;
+  /// El centro pide QR para este registro.
+  final bool qrAsked;
+
+  /// El QR leído en el paso anterior, si se leyó.
+  final QrReading? qr;
 
   @override
   State<EvidenciaScreen> createState() => _EvidenciaScreenState();
@@ -49,75 +58,139 @@ class EvidenciaScreen extends StatefulWidget {
 
 class _EvidenciaScreenState extends State<EvidenciaScreen> {
   bool _started = false;
-  bool _finishing = false;
-  LocationResult? _location;
+  bool _busy = false;
+  LocationReading? _location;
+  bool _readingLocation = false;
   Future<void>? _locationReading;
+  PhotoCapture? _photo;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_started) return;
     _started = true;
-    if (widget.center.requiresLocation) _startReading();
+    final AppController c = AppScope.read(context);
+    final CaptureRule rule = c.capture.location;
+    if (rule.asks(widget.type) && rule.active) {
+      _readingLocation = true;
+      _startReading(c);
+    }
   }
 
-  void _startReading() {
-    _locationReading = AppScope.read(context).readLocation().then(
-      (LocationResult result) {
-        if (mounted) setState(() => _location = result);
+  void _startReading(AppController c) {
+    _locationReading = c.device.readLocation().then(
+      (LocationReading reading) {
+        if (!mounted) return;
+        setState(() {
+          _location = reading;
+          _readingLocation = false;
+        });
       },
     );
   }
 
-  void _readLocation() {
-    setState(() => _location = null);
-    _startReading();
+  void _readAgain() {
+    setState(() {
+      _location = null;
+      _readingLocation = true;
+    });
+    _startReading(AppScope.read(context));
   }
 
   Future<void> _shoot() async {
+    final AppController c = AppScope.read(context);
+    setState(() => _busy = true);
+    final PhotoCapture capture = await c.device.takePhoto();
+    if (!mounted) return;
+    if (capture.cancelled) {
+      setState(() => _busy = false);
+      return;
+    }
+    if (!capture.taken) {
+      setState(() {
+        _busy = false;
+        _photo = capture;
+      });
+      await _finish();
+      return;
+    }
     final bool? use = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
-        builder: (BuildContext context) => const FotoPreviewScreen(),
+        builder: (BuildContext context) =>
+            FotoPreviewScreen(bytes: capture.bytes!),
       ),
     );
-    if (use == true && mounted) await _finish(photoTaken: true);
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (use == true) {
+      _photo = capture;
+      await _finish();
+    }
   }
 
-  Future<void> _finish({required bool photoTaken}) async {
-    if (_finishing) return;
-    setState(() => _finishing = true);
+  Future<void> _withoutPhoto() async {
+    _photo = const PhotoCapture.unavailable('NO_DISPONIBLE');
+    await _finish();
+  }
+
+  static String _locationProblem(LocationReading? reading) {
+    if (reading?.status == 'DENEGADO') {
+      return 'El teléfono no le dio permiso de ubicación a la app.';
+    }
+    return 'No se pudo obtener tu ubicación.';
+  }
+
+  static String _photoProblem(PhotoCapture? photo) {
+    if (photo?.status == 'DENEGADO') {
+      return 'El teléfono no le dio permiso de cámara a la app.';
+    }
+    return 'No se tomó la foto.';
+  }
+
+  Future<void> _finish() async {
+    if (_busy) return;
+    setState(() => _busy = true);
     await _locationReading;
     if (!mounted) return;
     final AppController c = AppScope.read(context);
-    final WorkCenter center = widget.center;
-    final Evidence evidence = Evidence(
-      qrRead: widget.qrRead,
-      location: center.requiresLocation
-          ? (_location ?? LocationResult.noDisponible)
-          : null,
-      photoTaken: center.requiresPhoto ? photoTaken : null,
-    );
+    final CaptureSettings settings = c.capture;
+    final CaptureRule location = settings.location;
+    final CaptureRule photo = settings.photo;
+    const String noConsent = 'No aceptaste esta captura. Puedes cambiarlo en '
+        'Más, en Mis datos de captura.';
+    String mark(CaptureRule rule, String text) =>
+        rule.mode == CaptureMode.required
+            ? '$text Tu centro la pide como obligatoria.'
+            : text;
 
+    final LocationReading? reading = _location;
+    final PhotoCapture? shot = _photo;
     final List<MissingEvidence> missing = <MissingEvidence>[
-      if (evidence.qrRead == false)
+      if (widget.qrAsked && widget.qr == null)
         const MissingEvidence(
           'Código QR',
           'No se leyó el código QR del centro.',
         ),
-      if (evidence.location != null && !evidence.locationOk)
-        MissingEvidence('Ubicación', _locationProblem(evidence.location!)),
-      if (evidence.photoTaken == false)
+      if (location.asks(widget.type) &&
+          (!location.active || reading == null || !reading.hasCoordinates))
+        MissingEvidence(
+          'Ubicación',
+          mark(
+            location,
+            location.active ? _locationProblem(reading) : noConsent,
+          ),
+        ),
+      if (photo.asks(widget.type) && (shot == null || !shot.taken))
         MissingEvidence(
           'Foto',
-          c.consent(Capability.foto)
-              ? 'No se tomó la foto.'
-              : 'No aceptaste la captura de foto. Puedes cambiarlo en '
-                  'Más, en Mis datos de captura.',
+          mark(photo, photo.active ? _photoProblem(shot) : noConsent),
         ),
     ];
 
+    final EvidenceResult result =
+        EvidenceResult(location: reading, photo: shot);
     if (missing.isEmpty) {
-      Navigator.of(context).pop(evidence);
+      Navigator.of(context).pop(result);
       return;
     }
     final bool? goOn = await Navigator.of(context).push<bool>(
@@ -130,36 +203,49 @@ class _EvidenciaScreenState extends State<EvidenciaScreen> {
     );
     if (!mounted) return;
     if (goOn == true) {
-      Navigator.of(context).pop(evidence);
+      Navigator.of(context).pop(result);
       return;
     }
-    setState(() => _finishing = false);
-    if (center.requiresLocation && !evidence.locationOk) _readLocation();
-  }
-
-  static String _locationProblem(LocationResult r) {
-    switch (r) {
-      case LocationResult.dentro:
-      case LocationResult.dentroBajaPrecision:
-        return '';
-      case LocationResult.fuera:
-        return 'Tu ubicación quedó fuera de la zona del centro.';
-      case LocationResult.sinPermiso:
-        return 'El teléfono no le dio permiso de ubicación a la app.';
-      case LocationResult.sinConsentimiento:
-        return 'No aceptaste la captura de ubicación. Puedes cambiarlo en '
-            'Más, en Mis datos de captura.';
-      case LocationResult.noDisponible:
-        return 'No se pudo obtener tu ubicación.';
+    // Reintentar: se vuelve a leer la ubicación si fue lo que falló.
+    setState(() {
+      _busy = false;
+      _photo = null;
+    });
+    if (location.asks(widget.type) &&
+        location.active &&
+        (reading == null || !reading.hasCoordinates)) {
+      _readAgain();
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final AppController c = AppScope.of(context);
-    final WorkCenter center = widget.center;
-    final bool camera = center.requiresPhoto && c.consent(Capability.foto);
-    final LocationResult? location = _location;
+    final CaptureSettings settings = c.capture;
+    final CaptureRule location = settings.location;
+    final CaptureRule photo = settings.photo;
+    final bool locationAsked = location.asks(widget.type);
+    final bool photoAsked = photo.asks(widget.type);
+    final bool camera = photoAsked && photo.active;
+    final LocationReading? reading = _location;
+
+    final String locationValue;
+    final bool? locationOk;
+    if (!location.active) {
+      locationValue = 'Sin tu aceptación';
+      locationOk = false;
+    } else if (_readingLocation || reading == null) {
+      locationValue = 'Leyendo una sola vez…';
+      locationOk = null;
+    } else if (reading.hasCoordinates) {
+      locationValue = 'Lista';
+      locationOk = true;
+    } else {
+      locationValue = reading.status == 'DENEGADO'
+          ? locationLabel(LocationResult.sinPermiso)
+          : locationLabel(LocationResult.noDisponible);
+      locationOk = false;
+    }
 
     return Scaffold(
       backgroundColor: LapsoColors.night,
@@ -208,8 +294,8 @@ class _EvidenciaScreenState extends State<EvidenciaScreen> {
                     const SizedBox(height: 8),
                     Text(
                       camera
-                          ? 'Usa la cámara frontal y que tu cara quede dentro '
-                              'del óvalo.'
+                          ? 'Se abrirá la cámara frontal. Que tu cara se vea '
+                              'completa y con buena luz.'
                           : 'Solo toma un momento.',
                       textAlign: TextAlign.center,
                       style: const TextStyle(
@@ -220,34 +306,28 @@ class _EvidenciaScreenState extends State<EvidenciaScreen> {
                     ),
                     const SizedBox(height: 20),
                     if (camera) ...<Widget>[
-                      const _CameraPlaceholder(),
+                      const _CameraHint(),
                       const SizedBox(height: 16),
                     ],
-                    if (widget.qrRead != null)
+                    if (widget.qrAsked)
                       _EvidenceLine(
                         icon: Icons.qr_code_2,
                         label: 'Código QR',
-                        value: widget.qrRead! ? 'Leído' : 'Sin leer',
-                        ok: widget.qrRead!,
+                        value: widget.qr != null ? 'Leído' : 'Sin leer',
+                        ok: widget.qr != null,
                       ),
-                    if (center.requiresLocation)
+                    if (locationAsked)
                       _EvidenceLine(
                         icon: Icons.place_outlined,
                         label: 'Ubicación',
-                        value: location == null
-                            ? 'Leyendo una sola vez…'
-                            : locationLabel(location),
-                        ok: location == null
-                            ? null
-                            : (location == LocationResult.dentro ||
-                                location ==
-                                    LocationResult.dentroBajaPrecision),
+                        value: locationValue,
+                        ok: locationOk,
                       ),
-                    if (center.requiresPhoto && !camera)
+                    if (photoAsked && !camera)
                       const _EvidenceLine(
                         icon: Icons.photo_camera_outlined,
                         label: 'Foto',
-                        value: 'Sin consentimiento',
+                        value: 'Sin tu aceptación',
                         ok: false,
                       ),
                   ],
@@ -260,13 +340,13 @@ class _EvidenciaScreenState extends State<EvidenciaScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
                   if (camera) ...<Widget>[
-                    Center(
-                      child: _Shutter(onPressed: _finishing ? null : _shoot),
+                    FilledButton.icon(
+                      onPressed: _busy ? null : _shoot,
+                      icon: const Icon(Icons.photo_camera_outlined),
+                      label: const Text('Tomar foto'),
                     ),
                     TextButton(
-                      onPressed: _finishing
-                          ? null
-                          : () => _finish(photoTaken: false),
+                      onPressed: _busy ? null : _withoutPhoto,
                       style: TextButton.styleFrom(
                         foregroundColor: Colors.white,
                       ),
@@ -274,10 +354,8 @@ class _EvidenciaScreenState extends State<EvidenciaScreen> {
                     ),
                   ] else
                     FilledButton(
-                      onPressed: _finishing
-                          ? null
-                          : () => _finish(photoTaken: false),
-                      child: _finishing
+                      onPressed: _busy ? null : _finish,
+                      child: _busy
                           ? const SizedBox(
                               width: 22,
                               height: 22,
@@ -298,40 +376,32 @@ class _EvidenciaScreenState extends State<EvidenciaScreen> {
   }
 }
 
-class _CameraPlaceholder extends StatelessWidget {
-  const _CameraPlaceholder();
+/// Ilustración que anticipa la foto. La cámara que se abre es la del sistema.
+class _CameraHint extends StatelessWidget {
+  const _CameraHint();
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      label: 'Vista de la cámara frontal',
-      child: ExcludeSemantics(
-        child: AspectRatio(
-          aspectRatio: 3 / 4,
-          child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFF0B1B45),
-              borderRadius: BorderRadius.circular(28),
-            ),
-            alignment: Alignment.center,
-            child: FractionallySizedBox(
-              widthFactor: 0.62,
-              heightFactor: 0.72,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: const BorderRadius.all(
-                    Radius.elliptical(200, 260),
-                  ),
-                  border: Border.all(color: LapsoColors.cyan, width: 3),
-                ),
-                child: const Center(
-                  child: Icon(
-                    Icons.person_outline,
-                    size: 96,
-                    color: Color(0xFF2A3F78),
-                  ),
-                ),
-              ),
+    return ExcludeSemantics(
+      child: Container(
+        height: 200,
+        decoration: BoxDecoration(
+          color: const Color(0xFF0B1B45),
+          borderRadius: BorderRadius.circular(28),
+        ),
+        alignment: Alignment.center,
+        child: Container(
+          width: 120,
+          height: 150,
+          decoration: BoxDecoration(
+            borderRadius: const BorderRadius.all(Radius.elliptical(60, 75)),
+            border: Border.all(color: LapsoColors.cyan, width: 3),
+          ),
+          child: const Center(
+            child: Icon(
+              Icons.person_outline,
+              size: 72,
+              color: Color(0xFF2A3F78),
             ),
           ),
         ),
@@ -409,45 +479,6 @@ class _EvidenceLine extends StatelessWidget {
                   color: state ? LapsoColors.goodDot : LapsoColors.amber,
                 ),
             ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _Shutter extends StatelessWidget {
-  const _Shutter({required this.onPressed});
-
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      enabled: onPressed != null,
-      label: 'Tomar foto',
-      excludeSemantics: true,
-      child: Material(
-        color: Colors.transparent,
-        shape: const CircleBorder(
-          side: BorderSide(color: Colors.white, width: 4),
-        ),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onPressed,
-          child: Padding(
-            padding: const EdgeInsets.all(8),
-            child: Container(
-              width: 60,
-              height: 60,
-              decoration: BoxDecoration(
-                color: onPressed == null
-                    ? LapsoColors.onNavyMuted
-                    : Colors.white,
-                shape: BoxShape.circle,
-              ),
-            ),
           ),
         ),
       ),

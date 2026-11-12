@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../data/lapso_api.dart';
 import '../../domain/format.dart';
 import '../../domain/models.dart';
 import '../../domain/rules.dart';
@@ -25,18 +24,27 @@ class MiJornadaScreen extends StatefulWidget {
 }
 
 class _MiJornadaScreenState extends State<MiJornadaScreen> {
-  bool _busy = false;
+  Future<void> _start(EventType type, {PauseType? pauseType}) {
+    return startRegisterFlow(context, type, pauseType: pauseType);
+  }
 
-  Future<void> _entrada() => startRegisterFlow(context, EventType.entrada);
+  Future<void> _entrada() async {
+    if (AppScope.read(context).shouldWarnLongSession) {
+      await _resolveLongSession();
+      return;
+    }
+    await _start(EventType.entrada);
+  }
 
   Future<void> _salida() async {
     if (AppScope.read(context).shouldWarnLongSession) {
       await _resolveLongSession();
       return;
     }
-    await startRegisterFlow(context, EventType.salida);
+    await _start(EventType.salida);
   }
 
+  /// Jornada abierta de más de 16 horas: se pregunta qué registrar.
   Future<void> _resolveLongSession() async {
     final AppController c = AppScope.read(context);
     final List<TimeEvent> shift = c.shift;
@@ -55,45 +63,14 @@ class _MiJornadaScreenState extends State<MiJornadaScreen> {
         );
       case LongSessionChoice.sameShift:
         c.dismissLongSession();
-        if (c.status == WorkStatus.enJornada) {
-          await startRegisterFlow(context, EventType.salida);
-        } else {
-          showLapsoSnack(
-            context,
-            'Primero reanuda tu jornada; después registra tu salida.',
-          );
-        }
+        await _start(EventType.salida);
     }
   }
 
   Future<void> _pausa() async {
-    final PauseType? type = await showTipoPausaSheet(
-      context,
-      mealMinutes: AppScope.read(context).center?.mealMinutes ?? 60,
-    );
+    final PauseType? type = await showTipoPausaSheet(context);
     if (type == null || !mounted) return;
-    await _quick(EventType.pausaInicio, pauseType: type);
-  }
-
-  /// Pausas y reanudaciones: se registran al momento, sin evidencia.
-  Future<void> _quick(EventType type, {PauseType? pauseType}) async {
-    final AppController c = AppScope.read(context);
-    setState(() => _busy = true);
-    String message;
-    try {
-      final TimeEvent e = await c.register(type, pauseType: pauseType);
-      final String what = type == EventType.pausaInicio
-          ? 'Pausa iniciada'
-          : 'Jornada reanudada';
-      message = e.pending
-          ? '$what a las ${hhmm(e.at)}. Guardada en tu teléfono.'
-          : '$what a las ${hhmm(e.at)}.';
-    } on LapsoException catch (e) {
-      message = e.message;
-    }
-    if (!mounted) return;
-    setState(() => _busy = false);
-    showLapsoSnack(context, message);
+    await _start(EventType.pausaInicio, pauseType: type);
   }
 
   void _openPending() {
@@ -122,64 +99,79 @@ class _MiJornadaScreenState extends State<MiJornadaScreen> {
 
     return SafeArea(
       bottom: false,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-        children: <Widget>[
-          _Header(
-            name: c.employee?.firstName ?? '',
-            initials: c.employee?.initials ?? '',
-            date: longDate(c.now),
-          ),
-          const SizedBox(height: 16),
-          if (c.offline) ...<Widget>[
-            const NoticeBanner(
-              tone: Tone.warn,
-              icon: Icons.cloud_off_outlined,
-              title: 'Sin conexión.',
-              text: 'Puedes registrar: se guarda en tu teléfono y se envía '
-                  'al reconectar.',
+      child: RefreshIndicator(
+        onRefresh: c.refresh,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          children: <Widget>[
+            _Header(
+              name: c.employee?.firstName ?? '',
+              initials: c.employee?.initials ?? '',
+              date: longDate(c.now),
             ),
-            const SizedBox(height: 12),
-          ],
-          if (pending > 0 || rejected > 0) ...<Widget>[
-            LapsoCard(
-              child: NavRow(
-                icon: pending > 0
-                    ? Icons.cloud_upload_outlined
-                    : Icons.error_outline,
-                title: _pendingTitle(pending, rejected),
-                subtitle: pending > 0
-                    ? 'Guardados en este teléfono.'
-                    : 'Revisa el motivo y pide la corrección.',
-                onTap: _openPending,
+            const SizedBox(height: 16),
+            if (c.offline) ...<Widget>[
+              NoticeBanner(
+                tone: Tone.warn,
+                icon: Icons.cloud_off_outlined,
+                title: 'Sin conexión.',
+                text: c.capture.offlineAllowed
+                    ? 'Puedes registrar: se guarda en tu teléfono y se envía '
+                        'al reconectar.'
+                    : 'Ves la última información guardada. Para registrar '
+                        'necesitas conexión.',
               ),
-            ),
-            const SizedBox(height: 12),
-          ],
-          if (c.shouldWarnLongSession) ...<Widget>[
-            _LongSessionCard(onResolve: _resolveLongSession),
-            const SizedBox(height: 12),
-          ],
-          TickBuilder(builder: (BuildContext context) => _hero(c, status)),
-          const SizedBox(height: 20),
-          ..._actions(c, status),
-          if (shift.isNotEmpty) ...<Widget>[
-            const SizedBox(height: 24),
-            SectionLabel(
-              isSameDay(shift.first.at, c.now)
-                  ? 'Registros de hoy'
-                  : 'Registros de esta jornada',
-            ),
-            LapsoCard(
-              child: DividedColumn(
-                children: <Widget>[
-                  for (final TimeEvent e in shift.reversed)
-                    _EventRow(event: e, onTap: () => _openReceipt(e)),
-                ],
+              const SizedBox(height: 12),
+            ],
+            if (pending > 0 || rejected > 0) ...<Widget>[
+              LapsoCard(
+                child: NavRow(
+                  icon: pending > 0
+                      ? Icons.cloud_upload_outlined
+                      : Icons.error_outline,
+                  title: _pendingTitle(pending, rejected),
+                  subtitle: pending > 0
+                      ? 'Guardados en este teléfono.'
+                      : 'Revisa el motivo y pide la corrección.',
+                  onTap: _openPending,
+                ),
               ),
-            ),
+              const SizedBox(height: 12),
+            ],
+            if (c.shouldWarnLongSession) ...<Widget>[
+              _LongSessionCard(onResolve: _resolveLongSession),
+              const SizedBox(height: 12),
+            ] else if (c.hasIncompleteSession) ...<Widget>[
+              const NoticeBanner(
+                tone: Tone.warn,
+                icon: Icons.history_toggle_off,
+                text: 'Tienes una jornada reciente sin salida registrada. '
+                    'Revísala en tu historial y pide la corrección.',
+              ),
+              const SizedBox(height: 12),
+            ],
+            TickBuilder(builder: (BuildContext context) => _hero(c, status)),
+            const SizedBox(height: 20),
+            ..._actions(c, status),
+            if (shift.isNotEmpty) ...<Widget>[
+              const SizedBox(height: 24),
+              SectionLabel(
+                isSameDay(shift.first.at, c.now)
+                    ? 'Registros de hoy'
+                    : 'Registros de esta jornada',
+              ),
+              LapsoCard(
+                child: DividedColumn(
+                  children: <Widget>[
+                    for (final TimeEvent e in shift.reversed)
+                      _EventRow(event: e, onTap: () => _openReceipt(e)),
+                  ],
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -197,8 +189,9 @@ class _MiJornadaScreenState extends State<MiJornadaScreen> {
 
   Widget _hero(AppController c, WorkStatus status) {
     final DateTime now = c.now;
-    final WorkCenter? center = c.center;
+    final String center = c.centerName;
     final List<TimeEvent> shift = c.shift;
+    final DateTime? end = c.scheduledEnd;
 
     switch (status) {
       case WorkStatus.sinEntrada:
@@ -214,12 +207,14 @@ class _MiJornadaScreenState extends State<MiJornadaScreen> {
               value: hhmmss(now),
               spokenValue: hhmm(now),
             ),
-            if (center != null) ...<Widget>[
+            if (center.isNotEmpty || end != null) ...<Widget>[
               const HeroDivider(),
               HeroStats(
                 items: <MapEntry<String, String>>[
-                  MapEntry<String, String>('Centro', center.name),
-                  MapEntry<String, String>('Horario', _schedule(center)),
+                  if (center.isNotEmpty)
+                    MapEntry<String, String>('Centro', center),
+                  if (end != null)
+                    MapEntry<String, String>('Salida prevista', hhmm(end)),
                 ],
               ),
             ],
@@ -228,8 +223,6 @@ class _MiJornadaScreenState extends State<MiJornadaScreen> {
 
       case WorkStatus.enJornada:
         final Duration worked = c.worked;
-        final Duration? target = center == null ? null : _target(center);
-        final DateTime? end = c.scheduledEnd;
         return HeroCard(
           children: <Widget>[
             const HeroPill('En jornada', dot: LapsoColors.goodDot),
@@ -239,17 +232,11 @@ class _MiJornadaScreenState extends State<MiJornadaScreen> {
               value: clock(worked),
               spokenValue: spoken(worked),
             ),
-            if (target != null && target > Duration.zero) ...<Widget>[
-              const SizedBox(height: 14),
-              _Progress(
-                value: worked.inSeconds / target.inSeconds,
-                label: 'Jornada de ${human(target)}',
-              ),
-            ],
             const HeroDivider(),
             HeroStats(
               items: <MapEntry<String, String>>[
-                MapEntry<String, String>('Entrada', hhmm(shift.first.at)),
+                if (shift.isNotEmpty)
+                  MapEntry<String, String>('Entrada', hhmm(shift.first.at)),
                 MapEntry<String, String>('Pausas', human(c.pauses)),
                 if (end != null)
                   MapEntry<String, String>('Salida prevista', hhmm(end)),
@@ -263,15 +250,6 @@ class _MiJornadaScreenState extends State<MiJornadaScreen> {
         final DateTime since = open?.at ?? now;
         final Duration inPause = now.difference(since);
         final PauseType? type = open?.pauseType;
-        String? note;
-        if (type == PauseType.comida && center != null) {
-          final Duration left =
-              Duration(minutes: center.mealMinutes) - inPause;
-          note = left.isNegative
-              ? 'Pasaste los ${center.mealMinutes} min de comida por '
-                  '${human(-left)}.'
-              : 'Te quedan ${human(left)} de comida.';
-        }
         return HeroCard(
           children: <Widget>[
             HeroPill(
@@ -283,7 +261,7 @@ class _MiJornadaScreenState extends State<MiJornadaScreen> {
               label: 'Tiempo en pausa',
               value: clock(inPause),
               spokenValue: spoken(inPause),
-              note: note,
+              note: 'El tiempo en pausa no cuenta como tiempo trabajado.',
             ),
             const HeroDivider(),
             HeroStats(
@@ -310,20 +288,30 @@ class _MiJornadaScreenState extends State<MiJornadaScreen> {
               spokenValue: spoken(c.worked),
               size: 44,
             ),
-            const HeroDivider(),
-            HeroStats(
-              items: <MapEntry<String, String>>[
-                MapEntry<String, String>('Entrada', hhmm(shift.first.at)),
-                MapEntry<String, String>('Salida', hhmm(shift.last.at)),
-                MapEntry<String, String>('Pausas', human(c.pauses)),
-              ],
-            ),
+            if (shift.isNotEmpty) ...<Widget>[
+              const HeroDivider(),
+              HeroStats(
+                items: <MapEntry<String, String>>[
+                  MapEntry<String, String>('Entrada', hhmm(shift.first.at)),
+                  MapEntry<String, String>('Salida', hhmm(shift.last.at)),
+                  MapEntry<String, String>('Pausas', human(c.pauses)),
+                ],
+              ),
+            ],
           ],
         );
     }
   }
 
+  /// Los botones salen de lo que el servidor acepta en este momento
+  /// (`allowed_actions`), no de reglas propias de la app.
   List<Widget> _actions(AppController c, WorkStatus status) {
+    final Set<EventType> allowed = c.allowedActions;
+    final bool canEnter = allowed.contains(EventType.entrada);
+    final bool canLeave = allowed.contains(EventType.salida);
+    final bool canPause = allowed.contains(EventType.pausaInicio);
+    final bool canResume = allowed.contains(EventType.pausaFin);
+
     switch (status) {
       case WorkStatus.sinEntrada:
         return <Widget>[
@@ -336,7 +324,7 @@ class _MiJornadaScreenState extends State<MiJornadaScreen> {
           ),
           const SizedBox(height: 14),
           Text(
-            _evidenceHint(c.center),
+            _evidenceHint(c.capture, EventType.entrada),
             textAlign: TextAlign.center,
             style: LapsoText.caption,
           ),
@@ -346,13 +334,13 @@ class _MiJornadaScreenState extends State<MiJornadaScreen> {
           PrimaryButton(
             label: 'Registrar salida',
             icon: Icons.logout,
-            onPressed: _busy ? null : _salida,
+            onPressed: canLeave ? _salida : null,
           ),
           const SizedBox(height: 10),
           SecondaryButton(
             label: 'Iniciar pausa',
             icon: Icons.pause,
-            onPressed: _busy ? null : _pausa,
+            onPressed: canPause ? _pausa : null,
           ),
         ];
       case WorkStatus.enPausa:
@@ -360,15 +348,22 @@ class _MiJornadaScreenState extends State<MiJornadaScreen> {
           PrimaryButton(
             label: 'Reanudar jornada',
             icon: Icons.play_arrow,
-            busy: _busy,
-            onPressed: () => _quick(EventType.pausaFin),
+            onPressed: canResume ? () => _start(EventType.pausaFin) : null,
           ),
-          const SizedBox(height: 12),
-          const Text(
-            'Para registrar tu salida, primero reanuda tu jornada.',
-            textAlign: TextAlign.center,
-            style: LapsoText.caption,
-          ),
+          if (canLeave) ...<Widget>[
+            const SizedBox(height: 10),
+            SecondaryButton(
+              label: 'Registrar salida',
+              icon: Icons.logout,
+              onPressed: _salida,
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Si registras tu salida, la pausa se cierra en ese momento.',
+              textAlign: TextAlign.center,
+              style: LapsoText.caption,
+            ),
+          ],
         ];
       case WorkStatus.terminada:
         return <Widget>[
@@ -384,30 +379,22 @@ class _MiJornadaScreenState extends State<MiJornadaScreen> {
             icon: Icons.calendar_today_outlined,
             onPressed: widget.onOpenHistory,
           ),
-          TextButton(
-            onPressed: _entrada,
-            child: const Text('Registrar otra entrada'),
-          ),
+          if (canEnter)
+            TextButton(
+              onPressed: _entrada,
+              child: const Text('Registrar otra entrada'),
+            ),
         ];
     }
   }
 
-  static String _schedule(WorkCenter center) =>
-      '${two(center.startHour)}:00 a ${two(center.endHour)}:00';
-
-  /// Tiempo de trabajo esperado: el horario menos la comida.
-  static Duration _target(WorkCenter center) =>
-      Duration(hours: center.endHour - center.startHour) -
-      Duration(minutes: center.mealMinutes);
-
-  static String _evidenceHint(WorkCenter? center) {
-    if (center == null) return '';
+  static String _evidenceHint(CaptureSettings settings, EventType type) {
     final List<String> asks = <String>[
-      if (center.requiresQr) 'el QR de tu centro',
-      if (center.requiresLocation) 'tu ubicación',
-      if (center.requiresPhoto) 'una foto',
+      if (settings.qr.asks(type)) 'el QR de tu centro',
+      if (settings.location.asks(type)) 'tu ubicación',
+      if (settings.photo.asks(type)) 'una foto',
     ];
-    if (asks.isEmpty) return 'Se registra con la hora del servidor.';
+    if (asks.isEmpty) return 'La hora de tu registro la pone el servidor.';
     final String list = asks.length == 1
         ? asks.first
         : '${asks.sublist(0, asks.length - 1).join(', ')} y ${asks.last}';
@@ -467,47 +454,6 @@ class _Header extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// Avance de la jornada. El texto dice lo mismo que la barra.
-class _Progress extends StatelessWidget {
-  const _Progress({required this.value, required this.label});
-
-  final double value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final double v = value.clamp(0.0, 1.0);
-    final int percent = (v * 100).round();
-    return Semantics(
-      label: '$label, $percent por ciento',
-      child: ExcludeSemantics(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            ClipRRect(
-              borderRadius: BorderRadius.circular(100),
-              child: LinearProgressIndicator(
-                value: v,
-                minHeight: 8,
-                backgroundColor: LapsoColors.onNavyChip,
-                color: LapsoColors.cyan,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '$label · $percent %',
-              style: const TextStyle(
-                fontSize: 12,
-                color: LapsoColors.onNavyMuted,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }

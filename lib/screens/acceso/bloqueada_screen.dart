@@ -41,8 +41,8 @@ class BloqueadaScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 12),
                     const Text(
-                      'Hubo demasiados intentos fallidos. Por seguridad no '
-                      'puedes entrar por ahora.',
+                      'Hubo demasiados intentos fallidos. Por seguridad la '
+                      'cuenta se bloquea 15 minutos.',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 15,
@@ -68,7 +68,7 @@ class BloqueadaScreen extends StatelessWidget {
                           child: Semantics(
                             label: done
                                 ? 'Ya puedes intentarlo de nuevo'
-                                : 'Podrás intentarlo de nuevo en '
+                                : 'Podrás intentarlo de nuevo en unos '
                                     '${left.inMinutes + 1} minutos',
                             child: ExcludeSemantics(
                               child: Column(
@@ -76,7 +76,7 @@ class BloqueadaScreen extends StatelessWidget {
                                   Text(
                                     done
                                         ? 'Ya puedes intentarlo de nuevo'
-                                        : 'Podrás intentarlo de nuevo en',
+                                        : 'Podrás intentarlo en unos',
                                     style: LapsoText.caption,
                                   ),
                                   if (!done) ...<Widget>[
@@ -106,11 +106,9 @@ class BloqueadaScreen extends StatelessWidget {
             ),
             BottomActions(
               children: <Widget>[
-                TickBuilder(
-                  builder: (BuildContext context) => SecondaryButton(
-                    label: 'Volver al inicio de sesión',
-                    onPressed: c.isLocked ? null : c.clearExpiredLock,
-                  ),
+                SecondaryButton(
+                  label: 'Volver al inicio de sesión',
+                  onPressed: c.clearExpiredLock,
                 ),
                 TextButton(
                   onPressed: c.forgetOrganization,

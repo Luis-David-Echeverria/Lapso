@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../config.dart';
 import '../../domain/format.dart';
 import '../../domain/models.dart';
 import '../../domain/rules.dart';
@@ -10,7 +11,8 @@ import '../../widgets/common.dart';
 import '../jornada/comprobante_screen.dart';
 import '../web_handoff.dart';
 
-/// Historial: un día a la vez, con su resumen y sus registros.
+/// Historial: un día a la vez, con su resumen y sus registros. Los números
+/// son los del servidor (`getMyTimesheets`), con correcciones ya aplicadas.
 class HistorialScreen extends StatefulWidget {
   const HistorialScreen({super.key});
 
@@ -27,100 +29,132 @@ class _HistorialScreenState extends State<HistorialScreen> {
     final AppController c = AppScope.of(context);
     final DateTime now = c.now;
     final DateTime today = dayOf(now);
-    final DateTime day = DateTime(today.year, today.month, today.day - _daysAgo);
-    final List<TimeEvent> all = c.allEvents;
-    final DateTime first = all.isEmpty ? today : dayOf(all.first.at);
-    final bool canGoBack = day.isAfter(first);
+    final DateTime day =
+        DateTime(today.year, today.month, today.day - _daysAgo);
+    final bool isToday = _daysAgo == 0;
+    final bool canGoBack = _daysAgo < kHistoryDays - 1;
     final bool canGoForward = _daysAgo > 0;
-    final DaySummary summary = summarizeDay(day, all, now);
+    final DaySummary? summary = c.dayAt(day);
     final String relative = relativeDay(day, now);
 
-    return SafeArea(
-      bottom: false,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-        children: <Widget>[
-          Semantics(
-            header: true,
-            child: Text('Historial', style: LapsoText.heading(26)),
+    final List<Widget> content;
+    if (summary == null && !c.historyLoaded) {
+      content = <Widget>[
+        if (c.offline)
+          const NoticeBanner(
+            tone: Tone.warn,
+            icon: Icons.cloud_off_outlined,
+            text: 'Sin conexión. El historial se consulta en el servidor; '
+                'desliza hacia abajo para intentarlo de nuevo.',
+          )
+        else
+          const Padding(
+            padding: EdgeInsets.only(top: 32),
+            child: Center(child: CircularProgressIndicator()),
           ),
-          const SizedBox(height: 14),
+      ];
+    } else if (summary == null || !summary.hasRecords) {
+      content = const <Widget>[_EmptyDay()];
+    } else {
+      content = <Widget>[
+        _SummaryCard(
+          summary: summary,
+          today: isToday,
+          liveWorked: isToday ? c.worked : null,
+          livePauses: isToday ? c.pauses : null,
+        ),
+        if (summary.events.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 20),
+          const SectionLabel('Registros'),
           LapsoCard(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-            child: Row(
+            child: DividedColumn(
               children: <Widget>[
-                IconButton(
-                  tooltip: 'Día anterior',
-                  onPressed:
-                      canGoBack ? () => setState(() => _daysAgo += 1) : null,
-                  icon: const Icon(Icons.chevron_left),
-                  color: LapsoColors.primaryDark,
-                ),
-                Expanded(
-                  child: Semantics(
-                    liveRegion: true,
-                    child: Column(
-                      children: <Widget>[
-                        Text(
-                          dayDate(day),
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: LapsoColors.navy,
-                          ),
-                        ),
-                        if (relative.isNotEmpty)
-                          Text(relative, style: LapsoText.caption),
-                      ],
+                for (final TimeEvent e in summary.events)
+                  _HistoryRow(
+                    event: e,
+                    onTap: () => Navigator.of(context).push<void>(
+                      MaterialPageRoute<void>(
+                        builder: (BuildContext context) =>
+                            ComprobanteScreen(event: e),
+                      ),
                     ),
                   ),
-                ),
-                IconButton(
-                  tooltip: 'Día siguiente',
-                  onPressed: canGoForward
-                      ? () => setState(() => _daysAgo -= 1)
-                      : null,
-                  icon: const Icon(Icons.chevron_right),
-                  color: LapsoColors.primaryDark,
-                ),
               ],
             ),
           ),
-          const SizedBox(height: 16),
-          if (summary.events.isEmpty)
-            const _EmptyDay()
-          else ...<Widget>[
-            _SummaryCard(summary: summary, today: _daysAgo == 0),
-            const SizedBox(height: 20),
-            const SectionLabel('Registros'),
+        ],
+      ];
+    }
+
+    return SafeArea(
+      bottom: false,
+      child: RefreshIndicator(
+        onRefresh: c.reloadHistory,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          children: <Widget>[
+            Semantics(
+              header: true,
+              child: Text('Historial', style: LapsoText.heading(26)),
+            ),
+            const SizedBox(height: 14),
             LapsoCard(
-              child: DividedColumn(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+              child: Row(
                 children: <Widget>[
-                  for (final TimeEvent e in summary.events)
-                    _HistoryRow(
-                      event: e,
-                      onTap: () => Navigator.of(context).push<void>(
-                        MaterialPageRoute<void>(
-                          builder: (BuildContext context) =>
-                              ComprobanteScreen(event: e),
-                        ),
+                  IconButton(
+                    tooltip: 'Día anterior',
+                    onPressed: canGoBack
+                        ? () => setState(() => _daysAgo += 1)
+                        : null,
+                    icon: const Icon(Icons.chevron_left),
+                    color: LapsoColors.primaryDark,
+                  ),
+                  Expanded(
+                    child: Semantics(
+                      liveRegion: true,
+                      child: Column(
+                        children: <Widget>[
+                          Text(
+                            dayDate(day),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                              color: LapsoColors.navy,
+                            ),
+                          ),
+                          if (relative.isNotEmpty)
+                            Text(relative, style: LapsoText.caption),
+                        ],
                       ),
                     ),
+                  ),
+                  IconButton(
+                    tooltip: 'Día siguiente',
+                    onPressed: canGoForward
+                        ? () => setState(() => _daysAgo -= 1)
+                        : null,
+                    icon: const Icon(Icons.chevron_right),
+                    color: LapsoColors.primaryDark,
+                  ),
                 ],
               ),
             ),
-          ],
-          const SizedBox(height: 20),
-          LapsoCard(
-            child: NavRow(
-              title: '¿Algo no coincide?',
-              subtitle: 'Pide la corrección de un registro en la web.',
-              external: true,
-              onTap: () => openWeb(context, WebPage.correccion),
+            const SizedBox(height: 16),
+            ...content,
+            const SizedBox(height: 20),
+            LapsoCard(
+              child: NavRow(
+                title: '¿Algo no coincide?',
+                subtitle: 'Pide la corrección de un registro en la web.',
+                external: true,
+                onTap: () => openWeb(context, WebPage.correccion),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -158,28 +192,43 @@ class _EmptyDay extends StatelessWidget {
 }
 
 class _SummaryCard extends StatelessWidget {
-  const _SummaryCard({required this.summary, required this.today});
+  const _SummaryCard({
+    required this.summary,
+    required this.today,
+    this.liveWorked,
+    this.livePauses,
+  });
 
   final DaySummary summary;
   final bool today;
 
+  /// Tiempos en vivo de la jornada abierta de hoy. El servidor solo da los
+  /// totales de las jornadas ya cerradas.
+  final Duration? liveWorked;
+  final Duration? livePauses;
+
   @override
   Widget build(BuildContext context) {
-    final TimeEvent? entry = summary.entry;
-    final TimeEvent? exit = summary.exit;
-    final bool open = summary.incomplete;
+    final DateTime? start = summary.start;
+    final DateTime? end = summary.end;
+    final bool open = summary.status == WorkStatus.enJornada ||
+        summary.status == WorkStatus.enPausa;
+    final Duration worked =
+        open ? (liveWorked ?? summary.worked) : summary.worked;
+    final Duration pauses =
+        open ? (livePauses ?? summary.pauses) : summary.pauses;
 
     final String state;
     final Tone tone;
-    if (!open) {
-      state = 'Jornada completa';
-      tone = Tone.good;
-    } else if (today) {
+    if (summary.incomplete || (open && !today)) {
+      state = 'Sin salida';
+      tone = Tone.warn;
+    } else if (open) {
       state = summary.status == WorkStatus.enPausa ? 'En pausa' : 'En curso';
       tone = Tone.info;
     } else {
-      state = 'Sin salida';
-      tone = Tone.warn;
+      state = summary.corrected ? 'Corregida' : 'Jornada completa';
+      tone = Tone.good;
     }
 
     return LapsoCard(
@@ -197,12 +246,9 @@ class _SummaryCard extends StatelessWidget {
           ),
           const SizedBox(height: 2),
           Semantics(
-            label: spoken(summary.worked),
+            label: spoken(worked),
             child: ExcludeSemantics(
-              child: Text(
-                human(summary.worked),
-                style: LapsoText.heading(34),
-              ),
+              child: Text(human(worked), style: LapsoText.heading(34)),
             ),
           ),
           const SizedBox(height: 8),
@@ -210,19 +256,19 @@ class _SummaryCard extends StatelessWidget {
             children: <Widget>[
               InfoRow(
                 label: 'Entrada',
-                value: entry == null ? 'Sin entrada' : hhmm(entry.at),
+                value: start == null ? 'Sin entrada' : hhmm(start),
               ),
               InfoRow(
                 label: 'Salida',
-                value: exit == null
-                    ? (today ? 'Aún sin salida' : 'Sin salida')
-                    : hhmm(exit.at),
-                valueColor: exit == null && !today
+                value: end == null
+                    ? (open && today ? 'Aún sin salida' : 'Sin salida')
+                    : hhmm(end),
+                valueColor: end == null && !(open && today)
                     ? LapsoColors.warnText
                     : LapsoColors.navy,
               ),
-              InfoRow(label: 'Pausas', value: human(summary.pauses)),
-              InfoRow(label: 'Presencia', value: human(summary.presence)),
+              InfoRow(label: 'Pausas', value: human(pauses)),
+              InfoRow(label: 'Presencia', value: human(worked + pauses)),
             ],
           ),
         ],

@@ -163,6 +163,8 @@ String locationLabel(LocationResult r) {
       return 'Dentro, precisión baja';
     case LocationResult.fuera:
       return 'Fuera de la zona';
+    case LocationResult.capturada:
+      return 'Capturada';
     case LocationResult.sinPermiso:
       return 'Sin permiso';
     case LocationResult.sinConsentimiento:
@@ -186,7 +188,12 @@ String evidenceSummary(Evidence e) {
   final List<String> got = <String>[];
   final List<String> missing = <String>[];
   if (e.qrRead != null) (e.qrRead! ? got : missing).add('QR');
-  if (e.location != null) (e.locationOk ? got : missing).add('ubicación');
+  final LocationResult? location = e.location;
+  if (location == LocationResult.fuera) {
+    got.add('ubicación fuera de zona');
+  } else if (location != null) {
+    (e.locationOk ? got : missing).add('ubicación');
+  }
   if (e.photoTaken != null) (e.photoTaken! ? got : missing).add('foto');
   String join(List<String> xs) {
     if (xs.length <= 1) return xs.join();
@@ -198,3 +205,46 @@ String evidenceSummary(Evidence e) {
   if (got.isEmpty) return 'Sin ${join(missing)}';
   return '${capitalize(join(got))} · sin ${join(missing)}';
 }
+
+/// Por qué el servidor rechazó un registro hecho sin conexión.
+String rejectionReason(String cause) {
+  switch (cause) {
+    case 'TOO_OLD':
+      return 'Pasó demasiado tiempo antes de enviarlo.';
+    case 'FUTURE':
+      return 'La hora del teléfono estaba adelantada.';
+    case 'TIME_ORDER':
+      return 'Su hora queda antes de un registro que ya existe.';
+    case 'SESSION_ALREADY_OPEN':
+      return 'Ya había una jornada abierta.';
+    case 'NO_OPEN_SESSION':
+      return 'No había una jornada abierta.';
+    case 'BREAK_ALREADY_OPEN':
+      return 'Ya había una pausa abierta.';
+    case 'NO_OPEN_BREAK':
+      return 'No había una pausa abierta.';
+    default:
+      return 'El servidor no pudo aceptarlo.';
+  }
+}
+
+/// Rol con el que alguien consultó la evidencia.
+String roleLabel(String role) {
+  switch (role) {
+    case 'SUPERVISOR':
+      return 'Supervisión';
+    case 'HR':
+      return 'Recursos Humanos';
+    case 'PAYROLL':
+      return 'Nómina';
+    case 'ORG_ADMIN':
+      return 'Administración';
+    case 'AUDITOR':
+      return 'Auditoría';
+    default:
+      return role;
+  }
+}
+
+/// Fecha AAAA-MM-DD, como la pide el servidor.
+String isoDate(DateTime d) => '${d.year}-${two(d.month)}-${two(d.day)}';

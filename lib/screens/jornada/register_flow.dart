@@ -1,86 +1,129 @@
 import 'package:flutter/material.dart';
 
 import '../../data/lapso_api.dart';
+import '../../domain/format.dart';
 import '../../domain/models.dart';
+import '../../domain/rules.dart';
+import '../../platform/device_capture.dart';
 import '../../state/app_controller.dart';
 import '../../state/app_scope.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/common.dart';
 import 'comprobante_screen.dart';
+import 'consentimiento_screen.dart';
 import 'escaner_qr_screen.dart';
 import 'evidencia_screen.dart';
 
-/// Flujo completo para registrar una entrada o una salida:
-/// QR del centro → ubicación y foto → envío → comprobante.
+/// Capturas por las que ya se preguntó desde que se abrió la app, para no
+/// insistir en cada registro a quien respondió «Ahora no».
+final Set<Capability> _askedThisRun = <Capability>{};
+
+/// Flujo completo de un registro:
+/// aceptación de capturas → QR del centro → ubicación y foto → envío →
+/// comprobante.
 ///
-/// Cada paso de evidencia solo aparece si el centro lo pide. Si alguno
-/// falla, el usuario puede registrar sin él y el registro queda marcado.
+/// Cada paso aparece solo si el centro pide esa captura para ese tipo de
+/// registro (`getMyCaptureSettings`). Si algo falla o la persona no acepta,
+/// el registro sigue adelante y queda marcado.
 ///
 /// Con [forceNewEntry] se registra una entrada aunque haya una jornada
-/// abierta (caso de jornada de más de 16 horas que quedó sin salida).
+/// abierta de más de 16 horas.
 Future<void> startRegisterFlow(
   BuildContext context,
   EventType type, {
+  PauseType? pauseType,
   bool forceNewEntry = false,
 }) async {
   final NavigatorState nav = Navigator.of(context);
   final AppController c = AppScope.read(context);
-  final WorkCenter? center = c.center;
 
-  Evidence evidence = Evidence.none;
-  if (center != null) {
-    bool? qr;
-    if (center.requiresQr) {
-      qr = await nav.push<bool>(
-        MaterialPageRoute<bool>(
-          builder: (BuildContext context) => EscanerQrScreen(
-            title: registerTitle(type),
-            heading: 'Escanea el código QR de tu centro',
-            hint: 'Es el código de tu centro de trabajo: ${center.name}.',
-            allowSkip: true,
-          ),
-        ),
-      );
-      if (qr == null) return;
-    }
-    if (center.requiresLocation || center.requiresPhoto) {
-      final Evidence? gathered = await nav.push<Evidence>(
-        MaterialPageRoute<Evidence>(
-          builder: (BuildContext context) => EvidenciaScreen(
-            type: type,
-            center: center,
-            qrRead: qr,
-          ),
-        ),
-      );
-      if (gathered == null) return;
-      evidence = gathered;
-    } else {
-      evidence = Evidence(qrRead: qr);
+  // 1. Antes de capturar datos personales se pide la aceptación.
+  for (final Capability capability in Capability.values) {
+    final CaptureRule rule = c.capture.rule(capability);
+    if (!rule.asks(type) || !rule.needsAnswer) continue;
+    if (!_askedThisRun.add(capability)) continue;
+    final bool? answer = await nav.push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (BuildContext context) =>
+            ConsentimientoScreen(capability: capability),
+      ),
+    );
+    if (answer == null) {
+      _askedThisRun.remove(capability);
+      return;
     }
   }
 
+  final CaptureSettings settings = c.capture;
+  final bool qrAsked = settings.qr.asks(type);
+
+  // 2. QR del centro.
+  QrReading? qr;
+  if (qrAsked) {
+    final String center = c.centerName;
+    final String? payload = await nav.push<String>(
+      MaterialPageRoute<String>(
+        builder: (BuildContext context) => EscanerQrScreen(
+          title: registerTitle(type),
+          heading: 'Escanea el código QR de tu centro',
+          hint: center.isEmpty
+              ? 'Es el código de tu centro de trabajo.'
+              : 'Es el código de tu centro de trabajo: $center.',
+          allowSkip: true,
+        ),
+      ),
+    );
+    if (payload == null) return;
+    qr = parseQrPayload(payload);
+  }
+
+  // 3. Ubicación y foto.
+  LocationReading? location;
+  PhotoCapture? photo;
+  if (settings.location.asks(type) || settings.photo.asks(type)) {
+    final EvidenceResult? evidence = await nav.push<EvidenceResult>(
+      MaterialPageRoute<EvidenceResult>(
+        builder: (BuildContext context) =>
+            EvidenciaScreen(type: type, qrAsked: qrAsked, qr: qr),
+      ),
+    );
+    if (evidence == null) return;
+    location = evidence.location;
+    photo = evidence.photo;
+  }
+
+  // 4. Envío y comprobante.
   await nav.push<void>(
     MaterialPageRoute<void>(
       builder: (BuildContext context) => _SendingScreen(
         type: type,
-        evidence: evidence,
+        pauseType: pauseType,
+        qr: qr,
+        location: location,
+        photo: photo,
         forceNewEntry: forceNewEntry,
       ),
     ),
   );
 }
 
-/// Envía el registro y se reemplaza por el comprobante.
+/// Envía el registro. Una entrada o una salida terminan en el comprobante;
+/// una pausa o una reanudación, de vuelta en Mi jornada con un aviso.
 class _SendingScreen extends StatefulWidget {
   const _SendingScreen({
     required this.type,
-    required this.evidence,
+    required this.pauseType,
+    required this.qr,
+    required this.location,
+    required this.photo,
     required this.forceNewEntry,
   });
 
   final EventType type;
-  final Evidence evidence;
+  final PauseType? pauseType;
+  final QrReading? qr;
+  final LocationReading? location;
+  final PhotoCapture? photo;
   final bool forceNewEntry;
 
   @override
@@ -100,19 +143,35 @@ class _SendingScreenState extends State<_SendingScreen> {
 
   Future<void> _send() async {
     final AppController c = AppScope.read(context);
+    final EventType type = widget.type;
     try {
       final TimeEvent event = await c.register(
-        widget.type,
-        evidence: widget.evidence,
+        type,
+        pauseType: widget.pauseType,
+        qr: widget.qr,
+        location: widget.location,
+        photo: widget.photo,
         forceNewEntry: widget.forceNewEntry,
       );
       if (!mounted) return;
-      await Navigator.of(context).pushReplacement<void, void>(
-        MaterialPageRoute<void>(
-          builder: (BuildContext context) =>
-              ComprobanteScreen(event: event, fresh: true),
-        ),
+      if (type == EventType.entrada || type == EventType.salida) {
+        await Navigator.of(context).pushReplacement<void, void>(
+          MaterialPageRoute<void>(
+            builder: (BuildContext context) =>
+                ComprobanteScreen(event: event, fresh: true),
+          ),
+        );
+        return;
+      }
+      final String what =
+          type == EventType.pausaInicio ? 'Pausa iniciada' : 'Jornada reanudada';
+      showLapsoSnack(
+        context,
+        event.pending
+            ? '$what a las ${hhmm(event.at)}. Guardada en tu teléfono.'
+            : '$what a las ${hhmm(event.at)}.',
       );
+      Navigator.of(context).pop();
     } on LapsoException catch (e) {
       if (!mounted) return;
       showLapsoSnack(context, e.message);

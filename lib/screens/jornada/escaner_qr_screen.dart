@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
 
+import '../../state/app_scope.dart';
 import '../../theme/tokens.dart';
 
 /// Lector de código QR a pantalla completa.
 ///
-/// Devuelve `true` si leyó un código, `false` si el usuario dijo que no puede
-/// leerlo (solo con [allowSkip]) y `null` si cerró la pantalla.
+/// Devuelve el contenido del código leído, una cadena vacía si la persona
+/// dijo que no puede leerlo (solo con [allowSkip]) y `null` si cerró la
+/// pantalla.
 ///
-/// Punto de integración: la vista de cámara es un marcador. Aquí va el lector
-/// real (por ejemplo `mobile_scanner`); al detectar un código se llama a
-/// `Navigator.pop(context, true)` y el botón "Simular lectura" desaparece.
-class EscanerQrScreen extends StatelessWidget {
+/// La vista de cámara la pone `DeviceCapture.buildQrScanner`: el lector real
+/// en la app y uno simulado en el modo de demostración.
+class EscanerQrScreen extends StatefulWidget {
   const EscanerQrScreen({
     super.key,
     required this.title,
@@ -27,6 +28,20 @@ class EscanerQrScreen extends StatelessWidget {
   final bool allowSkip;
 
   @override
+  State<EscanerQrScreen> createState() => _EscanerQrScreenState();
+}
+
+class _EscanerQrScreenState extends State<EscanerQrScreen> {
+  bool _closed = false;
+
+  /// Cierra la pantalla una sola vez, aunque el lector avise varias veces.
+  void _close(String? result) {
+    if (_closed) return;
+    _closed = true;
+    Navigator.of(context).pop(result);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: LapsoColors.night,
@@ -39,13 +54,13 @@ class EscanerQrScreen extends StatelessWidget {
                 children: <Widget>[
                   IconButton(
                     tooltip: 'Cerrar',
-                    onPressed: () => Navigator.of(context).pop(),
+                    onPressed: () => _close(null),
                     icon: const Icon(Icons.close, color: Colors.white),
                   ),
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
-                      title,
+                      widget.title,
                       style: const TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w600,
@@ -64,14 +79,14 @@ class EscanerQrScreen extends StatelessWidget {
                     Semantics(
                       header: true,
                       child: Text(
-                        heading,
+                        widget.heading,
                         textAlign: TextAlign.center,
                         style: LapsoText.heading(22, color: Colors.white),
                       ),
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      hint,
+                      widget.hint,
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         fontSize: 14,
@@ -80,7 +95,11 @@ class EscanerQrScreen extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 28),
-                    const _Viewfinder(),
+                    _Viewfinder(
+                      scanner: AppScope.read(context).device.buildQrScanner(
+                        onCode: _close,
+                      ),
+                    ),
                     const SizedBox(height: 20),
                     const Text(
                       'Coloca el código dentro del recuadro. '
@@ -96,26 +115,15 @@ class EscanerQrScreen extends StatelessWidget {
                 ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  FilledButton(
-                    onPressed: () => Navigator.of(context).pop(true),
-                    child: const Text('Simular lectura'),
-                  ),
-                  if (allowSkip)
-                    TextButton(
-                      onPressed: () => Navigator.of(context).pop(false),
-                      style: TextButton.styleFrom(
-                        foregroundColor: Colors.white,
-                      ),
-                      child: const Text('No puedo leer el código'),
-                    ),
-                ],
+            if (widget.allowSkip)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                child: TextButton(
+                  onPressed: () => _close(''),
+                  style: TextButton.styleFrom(foregroundColor: Colors.white),
+                  child: const Text('No puedo leer el código'),
+                ),
               ),
-            ),
           ],
         ),
       ),
@@ -124,37 +132,30 @@ class EscanerQrScreen extends StatelessWidget {
 }
 
 class _Viewfinder extends StatelessWidget {
-  const _Viewfinder();
+  const _Viewfinder({required this.scanner});
+
+  /// Vista de la cámara que lee el código.
+  final Widget scanner;
 
   @override
   Widget build(BuildContext context) {
-    return Semantics(
-      label: 'Vista de la cámara',
-      child: ExcludeSemantics(
-        child: AspectRatio(
-          aspectRatio: 1,
-          child: Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFF0B1B45),
-              borderRadius: BorderRadius.circular(28),
-            ),
-            child: Stack(
-              children: <Widget>[
-                const Center(
-                  child: Icon(
-                    Icons.qr_code_2,
-                    size: 120,
-                    color: Color(0xFF2A3F78),
-                  ),
+    return AspectRatio(
+      aspectRatio: 1,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: ColoredBox(
+          color: const Color(0xFF0B1B45),
+          child: Stack(
+            fit: StackFit.expand,
+            children: <Widget>[
+              Semantics(label: 'Vista de la cámara', child: scanner),
+              IgnorePointer(
+                child: Padding(
+                  padding: const EdgeInsets.all(28),
+                  child: CustomPaint(painter: _CornersPainter()),
                 ),
-                Positioned.fill(
-                  child: Padding(
-                    padding: const EdgeInsets.all(28),
-                    child: CustomPaint(painter: _CornersPainter()),
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

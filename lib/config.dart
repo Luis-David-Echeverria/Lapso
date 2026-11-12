@@ -1,25 +1,39 @@
-/// Valores de configuración de la app.
-///
-/// Los marcados como pendientes son datos que todavía debe dar FLU3NCE.
+/// Valores de configuración de la app. Se pueden cambiar al compilar con
+/// `--dart-define`, sin tocar el código.
 library;
 
 /// Versión que se muestra en Más. Debe coincidir con `pubspec.yaml`.
-const String kAppVersion = '0.2.0';
+const String kAppVersion = '0.3.0';
 
-/// Canal de distribución.
-const String kAppChannel = 'pruebas';
+/// Servidor de Lapso. Por omisión, el ambiente de validación.
+///
+/// `flutter build ... --dart-define=LAPSO_SERVER=https://app.ejemplo.mx`
+const String kServerUrl = String.fromEnvironment(
+  'LAPSO_SERVER',
+  defaultValue: 'https://validacion.lapsojornada.mx',
+);
 
-/// Servidor de validación. Solo lo usa la implementación HTTP de `LapsoApi`.
-const String kApiBaseUrl = 'https://validacion.lapsojornada.mx/api/v1';
+/// Todas las rutas de la API cuelgan de aquí.
+const String kApiBaseUrl = '$kServerUrl/api/v1';
 
-/// Web de Lapso, para los trámites que no viven en la app.
-const String kWebBaseUrl = 'https://validacion.lapsojornada.mx';
+/// Web de Lapso, para los trámites que todavía no viven en la app.
+const String kWebBaseUrl = kServerUrl;
 
-/// Días que el trabajador puede consultar sus fotos.
-const int kPhotoRetentionDays = 62;
+/// Modo de demostración: servidor simulado en memoria y capturas simuladas.
+/// Nunca en una compilación para tienda.
+///
+/// `flutter run --dart-define=LAPSO_DEMO=true`
+const bool kDemoMode = bool.fromEnvironment('LAPSO_DEMO');
 
-/// Pendiente: correo de soporte.
-const String? kSupportEmail = null;
+/// Días de historial que la app consulta (el máximo por consulta del
+/// servidor) y que cubre «Mis fotos».
+const int kHistoryDays = 62;
 
-/// Pendiente: teléfono de soporte.
-const String? kSupportPhone = null;
+/// Límites de la foto de evidencia que acepta el servidor.
+const int kPhotoMaxBytes = 300 * 1024;
+const double kPhotoMaxSide = 1024;
+
+/// Tipos de texto legal públicos.
+const String kLegalPrivacy = 'AVISO_PRIVACIDAD';
+const String kLegalRetention = 'POLITICA_CONSERVACION';
+const String kLegalRecord = 'MEDIO_REGISTRO';

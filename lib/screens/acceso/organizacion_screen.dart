@@ -41,8 +41,8 @@ class _OrganizacionScreenState extends State<OrganizacionScreen> {
   }
 
   Future<void> _scan() async {
-    final bool? read = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
+    final String? payload = await Navigator.of(context).push<String>(
+      MaterialPageRoute<String>(
         builder: (BuildContext context) => const EscanerQrScreen(
           title: 'Tu organización',
           heading: 'Escanea el código QR de tu organización',
@@ -50,10 +50,18 @@ class _OrganizacionScreenState extends State<OrganizacionScreen> {
         ),
       ),
     );
-    if (read != true || !mounted) return;
-    // Punto de integración: aquí llega el código leído por la cámara.
-    _code.text = 'campo-prueba';
-    await _submit();
+    if (payload == null || payload.isEmpty || !mounted) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final String? problem =
+        await AppScope.read(context).chooseOrganizationByQr(payload);
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _error = problem;
+    });
   }
 
   @override

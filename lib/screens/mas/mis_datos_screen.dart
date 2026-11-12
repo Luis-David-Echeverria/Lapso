@@ -1,16 +1,18 @@
 import 'package:flutter/material.dart';
 
 import '../../config.dart';
+import '../../data/lapso_api.dart';
 import '../../domain/models.dart';
 import '../../state/app_controller.dart';
 import '../../state/app_scope.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/common.dart';
+import '../jornada/consentimiento_screen.dart';
 import 'mis_fotos_screen.dart';
 import 'quien_vio_screen.dart';
 
-/// Mis datos de captura: consentimientos de ubicación y foto, y acceso a
-/// quién los consultó.
+/// Mis datos de captura: qué pide el centro, qué aceptó la persona y quién
+/// consultó su ubicación o sus fotos.
 class MisDatosScreen extends StatelessWidget {
   const MisDatosScreen({super.key});
 
@@ -23,6 +25,19 @@ class MisDatosScreen extends StatelessWidget {
     }
   }
 
+  static String _subtitle(Capability c, CaptureRule rule) {
+    if (rule.mode == CaptureMode.off) return 'Tu centro no la pide.';
+    final String what = c == Capability.ubicacion
+        ? 'Una sola lectura, en el momento del registro.'
+        : 'Una foto con la cámara frontal.';
+    if (rule.consent == ConsentStatus.outdated) {
+      return '$what El aviso de privacidad cambió: acéptalo de nuevo.';
+    }
+    return rule.mode == CaptureMode.required
+        ? '$what Tu centro la pide como obligatoria.'
+        : what;
+  }
+
   Future<void> _toggle(
     BuildContext context,
     Capability capability,
@@ -30,44 +45,65 @@ class MisDatosScreen extends StatelessWidget {
   ) async {
     final AppController c = AppScope.read(context);
     final String name = _name(capability);
-    if (!accepted) {
-      final bool? confirmed = await showDialog<bool>(
-        context: context,
-        builder: (BuildContext context) => AlertDialog(
-          title: Text('¿Retirar tu consentimiento de $name?'),
-          content: Text(
-            'Podrás seguir registrando tu jornada: tus registros se '
-            'guardarán marcados como sin $name. Lo que ya se capturó no se '
-            'borra.',
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancelar'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Retirar'),
-            ),
-          ],
+    if (accepted) {
+      // Aceptar pasa por la pantalla que explica qué se captura y para qué.
+      await Navigator.of(context).push<bool>(
+        MaterialPageRoute<bool>(
+          builder: (BuildContext context) =>
+              ConsentimientoScreen(capability: capability),
         ),
       );
-      if (confirmed != true) return;
+      return;
     }
-    await c.setConsent(capability, accepted: accepted);
-    if (!context.mounted) return;
-    showLapsoSnack(
-      context,
-      accepted
-          ? 'Aceptaste la captura de $name.'
-          : 'Retiraste tu consentimiento de $name.',
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: Text('¿Retirar tu consentimiento de $name?'),
+        content: Text(
+          'Podrás seguir registrando tu jornada: tus registros se guardarán '
+          'marcados como sin $name. Lo que ya se capturó no se borra con '
+          'esto; para pedir que se elimine, usa el contacto de Privacidad y '
+          'ayuda.',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Retirar'),
+          ),
+        ],
+      ),
     );
+    if (confirmed != true) return;
+    String message = 'Retiraste tu consentimiento de $name.';
+    try {
+      await c.setConsent(capability, accepted: false);
+    } on LapsoException catch (e) {
+      message = e.message;
+    }
+    if (!context.mounted) return;
+    showLapsoSnack(context, message);
   }
 
   @override
   Widget build(BuildContext context) {
     final AppController c = AppScope.of(context);
     final int views = c.evidenceViews.length;
+
+    Widget consentRow(Capability capability, String title) {
+      final CaptureRule rule = c.capture.rule(capability);
+      return SwitchRow(
+        title: title,
+        subtitle: _subtitle(capability, rule),
+        value: rule.accepted,
+        onChanged: rule.mode == CaptureMode.off || c.offline
+            ? null
+            : (bool v) => _toggle(context, capability, v),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('Mis datos de captura')),
@@ -83,24 +119,21 @@ class MisDatosScreen extends StatelessWidget {
                 style: LapsoText.secondary,
               ),
             ),
+            if (c.offline) ...<Widget>[
+              const NoticeBanner(
+                tone: Tone.warn,
+                icon: Icons.cloud_off_outlined,
+                text: 'Sin conexión. Para cambiar lo que aceptas necesitas '
+                    'internet.',
+              ),
+              const SizedBox(height: 16),
+            ],
             const SectionLabel('Lo que aceptas capturar'),
             LapsoCard(
               child: DividedColumn(
                 children: <Widget>[
-                  SwitchRow(
-                    title: 'Ubicación al registrar',
-                    subtitle: 'Una sola lectura, en el momento del registro.',
-                    value: c.consent(Capability.ubicacion),
-                    onChanged: (bool v) =>
-                        _toggle(context, Capability.ubicacion, v),
-                  ),
-                  SwitchRow(
-                    title: 'Foto al registrar',
-                    subtitle: 'Una foto con la cámara frontal.',
-                    value: c.consent(Capability.foto),
-                    onChanged: (bool v) =>
-                        _toggle(context, Capability.foto, v),
-                  ),
+                  consentRow(Capability.ubicacion, 'Ubicación al registrar'),
+                  consentRow(Capability.foto, 'Foto al registrar'),
                 ],
               ),
             ),
@@ -125,7 +158,7 @@ class MisDatosScreen extends StatelessWidget {
                   NavRow(
                     icon: Icons.photo_library_outlined,
                     title: 'Mis fotos',
-                    subtitle: 'De los últimos $kPhotoRetentionDays días.',
+                    subtitle: 'De los últimos $kHistoryDays días.',
                     onTap: () => Navigator.of(context).push<void>(
                       MaterialPageRoute<void>(
                         builder: (BuildContext context) =>

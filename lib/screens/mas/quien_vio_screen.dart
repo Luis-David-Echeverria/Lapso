@@ -12,8 +12,8 @@ class QuienVioScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final List<EvidenceView> views =
-        AppScope.of(context).evidenceViews.reversed.toList(growable: false);
+    // El servidor las entrega de la más reciente a la más antigua.
+    final List<EvidenceView> views = AppScope.of(context).evidenceViews;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Quién vio mis datos')),
@@ -25,7 +25,7 @@ class QuienVioScreen extends StatelessWidget {
               padding: EdgeInsets.fromLTRB(8, 0, 8, 16),
               child: Text(
                 'Cada vez que alguien de tu organización abre tu ubicación o '
-                'una foto tuya, queda anotado aquí con su motivo.',
+                'una foto tuya, queda anotado aquí.',
                 style: LapsoText.secondary,
               ),
             ),
@@ -91,16 +91,15 @@ class _ViewRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 Text(
-                  view.viewer,
+                  view.viewerName,
                   style: LapsoText.label.copyWith(fontSize: 15),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   '${photo ? 'Vio tu foto' : 'Vio tu ubicación'} · '
-                  '${view.eventLabel}',
+                  '${roleLabel(view.viewerRole)}',
                   style: LapsoText.caption,
                 ),
-                Text('Motivo: ${view.reason}', style: LapsoText.caption),
                 Text(dateTime(view.at), style: LapsoText.caption),
               ],
             ),

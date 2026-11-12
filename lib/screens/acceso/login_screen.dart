@@ -67,12 +67,12 @@ class _LoginScreenState extends State<LoginScreen> {
           // RootGate cambia de pantalla al notificar el controlador.
           break;
         case LoginStatus.wrongCredentials:
-          final int left = r.attemptsLeft ?? 0;
-          problem = 'Número de empleado o PIN incorrecto. '
-              '${left == 1 ? 'Te queda 1 intento.' : 'Te quedan $left intentos.'}';
+          problem = 'Número de empleado o PIN incorrecto. Después de varios '
+              'intentos fallidos la cuenta se bloquea 15 minutos.';
         case LoginStatus.noWorkerProfile:
-          problem = 'Tu usuario no tiene perfil de trabajador. '
-              'Consulta a Recursos Humanos.';
+          problem = r.message ??
+              'Tu usuario no tiene perfil de trabajador. Consulta a '
+                  'Recursos Humanos.';
       }
     } on LapsoException catch (e) {
       problem = e.message;
@@ -112,6 +112,13 @@ class _LoginScreenState extends State<LoginScreen> {
                       style: LapsoText.secondary,
                     ),
                     const SizedBox(height: 18),
+                    if (c.sessionExpired) ...<Widget>[
+                      const NoticeBanner(
+                        text: 'Tu sesión terminó. Entra de nuevo para '
+                            'continuar.',
+                      ),
+                      const SizedBox(height: 14),
+                    ],
                     const Text('Número de empleado', style: LapsoText.label),
                     const SizedBox(height: 8),
                     TextField(

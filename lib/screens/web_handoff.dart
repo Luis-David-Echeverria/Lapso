@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../config.dart';
 import '../theme/tokens.dart';
@@ -25,10 +26,11 @@ String _title(WebPage page) {
   }
 }
 
-/// Avisa que el trámite continúa en el navegador y abre la web.
+/// Avisa que el trámite continúa en el navegador y abre la web de Lapso.
 ///
-/// Punto de integración: falta abrir la dirección en el navegador (por
-/// ejemplo con `url_launcher`). Por ahora se muestra la dirección.
+/// El contrato 0.9.0 ya trae las operaciones para hacer estos trámites
+/// dentro de la app (correcciones y periodos); mientras se construyen esas
+/// pantallas, se hacen en la web.
 Future<void> openWeb(BuildContext context, WebPage page) {
   final String url = '$kWebBaseUrl${_path(page)}';
   return showModalBottomSheet<void>(
@@ -76,9 +78,16 @@ Future<void> openWeb(BuildContext context, WebPage page) {
               PrimaryButton(
                 label: 'Abrir la web',
                 icon: Icons.open_in_new,
-                onPressed: () {
+                onPressed: () async {
                   Navigator.of(context).pop();
-                  // Punto de integración: launchUrl(Uri.parse(url)).
+                  try {
+                    await launchUrl(
+                      Uri.parse(url),
+                      mode: LaunchMode.externalApplication,
+                    );
+                  } on Exception {
+                    // Sin navegador disponible: la dirección ya se mostró.
+                  }
                 },
               ),
               const SizedBox(height: 8),

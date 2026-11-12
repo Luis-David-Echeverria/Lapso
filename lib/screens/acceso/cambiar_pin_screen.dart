@@ -22,15 +22,30 @@ class CambiarPinScreen extends StatefulWidget {
 class _CambiarPinScreenState extends State<CambiarPinScreen> {
   static const int _pinLength = 6;
 
-  late _Step _step = widget.forced ? _Step.fresh : _Step.current;
+  bool _started = false;
+
+  /// Hay que pedir el PIN actual. En el cambio obligatorio no hace falta si
+  /// la persona lo acaba de escribir para entrar.
+  bool _askCurrent = true;
+  _Step _step = _Step.current;
   String _entry = '';
+  String _current = '';
   String _fresh = '';
   String? _error;
   bool _busy = false;
 
-  List<_Step> get _steps => widget.forced
-      ? const <_Step>[_Step.fresh, _Step.confirm]
-      : const <_Step>[_Step.current, _Step.fresh, _Step.confirm];
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+    _askCurrent = !widget.forced || AppScope.read(context).needsCurrentPin;
+    _step = _askCurrent ? _Step.current : _Step.fresh;
+  }
+
+  List<_Step> get _steps => _askCurrent
+      ? const <_Step>[_Step.current, _Step.fresh, _Step.confirm]
+      : const <_Step>[_Step.fresh, _Step.confirm];
 
   String get _title {
     switch (_step) {
@@ -46,7 +61,9 @@ class _CambiarPinScreenState extends State<CambiarPinScreen> {
   String get _help {
     switch (_step) {
       case _Step.current:
-        return 'Lo pedimos para confirmar que eres tú.';
+        return widget.forced
+            ? 'Es el PIN temporal que te dio Recursos Humanos.'
+            : 'Lo pedimos para confirmar que eres tú.';
       case _Step.fresh:
         return 'No uses seis iguales, una secuencia, grupos repetidos, '
             'tu número de empleado ni tu PIN actual.';
@@ -76,14 +93,8 @@ class _CambiarPinScreenState extends State<CambiarPinScreen> {
     final AppController c = AppScope.read(context);
     switch (_step) {
       case _Step.current:
-        if (!c.isCurrentPin(_entry)) {
-          setState(() {
-            _entry = '';
-            _error = 'Ese no es tu PIN actual.';
-          });
-          return;
-        }
         setState(() {
+          _current = _entry;
           _entry = '';
           _step = _Step.fresh;
         });
@@ -104,14 +115,24 @@ class _CambiarPinScreenState extends State<CambiarPinScreen> {
           return;
         }
         setState(() => _busy = true);
-        final String? problem = await c.changePin(_fresh);
+        final String? problem = await c.changePin(
+          _fresh,
+          currentPin: _askCurrent ? _current : null,
+        );
         if (!mounted) return;
         if (problem != null) {
+          final bool wrongCurrent = problem == AppController.wrongCurrentPin;
           setState(() {
             _busy = false;
             _entry = '';
             _fresh = '';
-            _step = _Step.fresh;
+            if (wrongCurrent) {
+              _askCurrent = true;
+              _current = '';
+              _step = _Step.current;
+            } else {
+              _step = _Step.fresh;
+            }
             _error = problem;
           });
           return;

@@ -42,6 +42,10 @@ void main() {
     expect(relativeDay(DateTime(2026, 11, 8), now), '');
   });
 
+  test('fecha para el servidor', () {
+    expect(isoDate(DateTime(2026, 3, 7, 22, 15)), '2026-03-07');
+  });
+
   test('huella abreviada', () {
     final String hash = 'a3f97c1e${'0' * 52}0b42';
     expect(shortHash(hash), 'a3f9 7c1e … 0b42');
@@ -79,6 +83,12 @@ void main() {
         ),
       ),
       'Sin QR, ubicación y foto',
+    );
+    expect(
+      evidenceSummary(
+        const Evidence(qrRead: true, location: LocationResult.fuera),
+      ),
+      'QR y ubicación fuera de zona',
     );
   });
 }

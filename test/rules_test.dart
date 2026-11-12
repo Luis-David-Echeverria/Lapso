@@ -75,10 +75,28 @@ void main() {
       expect(validateNext(WorkStatus.enPausa, EventType.entrada), isNotNull);
     });
 
-    test('salida solo en jornada, no en pausa', () {
+    test('salida con jornada abierta, también durante una pausa', () {
       expect(validateNext(WorkStatus.enJornada, EventType.salida), isNull);
-      expect(validateNext(WorkStatus.enPausa, EventType.salida), isNotNull);
+      expect(validateNext(WorkStatus.enPausa, EventType.salida), isNull);
       expect(validateNext(WorkStatus.sinEntrada, EventType.salida), isNotNull);
+      expect(validateNext(WorkStatus.terminada, EventType.salida), isNotNull);
+    });
+
+    test('acciones posibles por estado', () {
+      expect(
+        actionsFor(WorkStatus.sinEntrada),
+        <EventType>{EventType.entrada},
+      );
+      expect(
+        actionsFor(WorkStatus.enJornada),
+        <EventType>{EventType.salida, EventType.pausaInicio},
+      );
+      expect(
+        actionsFor(WorkStatus.enPausa),
+        <EventType>{EventType.salida, EventType.pausaFin},
+      );
+      expect(applyEvent(WorkStatus.enPausa, EventType.salida),
+          WorkStatus.terminada);
     });
 
     test('pausas', () {
@@ -149,8 +167,8 @@ void main() {
       expect(s.pauses, const Duration(hours: 1));
       expect(s.presence, const Duration(hours: 9));
       expect(s.incomplete, isFalse);
-      expect(s.entry?.at, at(9));
-      expect(s.exit?.at, at(18));
+      expect(s.start, at(9));
+      expect(s.end, at(18));
     });
 
     test('día sin registros', () {
@@ -160,6 +178,7 @@ void main() {
         DateTime(2026, 11, 12),
       );
       expect(s.events, isEmpty);
+      expect(s.hasRecords, isFalse);
       expect(s.status, WorkStatus.sinEntrada);
       expect(s.worked, Duration.zero);
     });
@@ -171,7 +190,45 @@ void main() {
         DateTime(2026, 11, 12),
       );
       expect(s.incomplete, isTrue);
+      expect(s.end, isNull);
       expect(s.worked, const Duration(hours: 4));
+    });
+  });
+
+  group('códigos QR y de organización', () {
+    test('QR con dirección, token y código cambiante', () {
+      final QrReading? qr = parseQrPayload(
+        'https://validacion.lapsojornada.mx/q/AbCdEfGhIjKlMnOp'
+        '?k=QRSTUVWXYZ012345',
+      );
+      expect(qr?.token, 'AbCdEfGhIjKlMnOp');
+      expect(qr?.rotatingCode, 'QRSTUVWXYZ012345');
+    });
+
+    test('QR con el token solo', () {
+      final QrReading? qr = parseQrPayload('AbCdEfGhIjKlMnOp');
+      expect(qr?.token, 'AbCdEfGhIjKlMnOp');
+      expect(qr?.rotatingCode, isNull);
+    });
+
+    test('lo que no es un QR de Lapso se descarta', () {
+      expect(parseQrPayload(''), isNull);
+      expect(parseQrPayload('hola'), isNull);
+      expect(parseQrPayload('https://ejemplo.mx/'), isNull);
+    });
+
+    test('código de organización escrito o pegado como enlace', () {
+      expect(parseOrganizationCode(' Campo-Prueba '), 'campo-prueba');
+      expect(
+        parseOrganizationCode('https://lapsojornada.mx/o/campo-prueba'),
+        'campo-prueba',
+      );
+      expect(
+        parseOrganizationCode('https://lapsojornada.mx/?tenant=org-demo'),
+        'org-demo',
+      );
+      expect(parseOrganizationCode('con espacios'), isNull);
+      expect(parseOrganizationCode(''), isNull);
     });
   });
 }

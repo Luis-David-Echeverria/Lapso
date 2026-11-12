@@ -9,17 +9,50 @@ import 'screens/home_shell.dart';
 import 'state/app_controller.dart';
 import 'state/app_scope.dart';
 import 'theme/theme.dart';
+import 'theme/tokens.dart';
 
-class LapsoApp extends StatelessWidget {
+class LapsoApp extends StatefulWidget {
   const LapsoApp({super.key, required this.controller});
 
   final AppController controller;
 
   @override
+  State<LapsoApp> createState() => _LapsoAppState();
+}
+
+class _LapsoAppState extends State<LapsoApp> {
+  final GlobalKey<NavigatorState> _navigator = GlobalKey<NavigatorState>();
+  bool _wasLoggedIn = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _wasLoggedIn = widget.controller.loggedIn;
+    widget.controller.addListener(_onChange);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onChange);
+    super.dispose();
+  }
+
+  /// Si la sesión termina (la cerró la persona, venció o el servidor la
+  /// revocó), se cierran las pantallas abiertas y queda la de acceso.
+  void _onChange() {
+    final bool loggedIn = widget.controller.loggedIn;
+    if (_wasLoggedIn && !loggedIn) {
+      _navigator.currentState?.popUntil((Route<dynamic> r) => r.isFirst);
+    }
+    _wasLoggedIn = loggedIn;
+  }
+
+  @override
   Widget build(BuildContext context) {
     return AppScope(
-      controller: controller,
+      controller: widget.controller,
       child: MaterialApp(
+        navigatorKey: _navigator,
         title: 'Lapso Jornada',
         debugShowCheckedModeBanner: false,
         theme: buildLapsoTheme(),
@@ -39,6 +72,7 @@ class RootGate extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final AppController c = AppScope.of(context);
+    if (!c.ready) return const _Splash();
     if (!c.hasOrganization) return const OrganizacionScreen();
     if (!c.loggedIn) {
       return c.lockedUntil != null
@@ -47,5 +81,24 @@ class RootGate extends StatelessWidget {
     }
     if (c.mustChangePin) return const CambiarPinScreen(forced: true);
     return const HomeShell();
+  }
+}
+
+/// Se muestra un instante mientras se lee la sesión guardada.
+class _Splash extends StatelessWidget {
+  const _Splash();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: LapsoColors.surface,
+      body: Center(
+        child: Image.asset(
+          'assets/brand/lapso-lockup.png',
+          height: 70,
+          semanticLabel: 'Lapso Jornada',
+        ),
+      ),
+    );
   }
 }

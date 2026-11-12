@@ -1,13 +1,16 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import '../../theme/tokens.dart';
 
 /// Vista previa de la foto recién tomada. Devuelve `true` para usarla y
 /// `false` para tomar otra.
-///
-/// Punto de integración: aquí se muestra la imagen real de la cámara.
 class FotoPreviewScreen extends StatelessWidget {
-  const FotoPreviewScreen({super.key});
+  const FotoPreviewScreen({super.key, required this.bytes});
+
+  /// La foto, en JPEG.
+  final Uint8List bytes;
 
   @override
   Widget build(BuildContext context) {
@@ -45,16 +48,26 @@ class FotoPreviewScreen extends StatelessWidget {
                       child: ExcludeSemantics(
                         child: AspectRatio(
                           aspectRatio: 3 / 4,
-                          child: Container(
-                            decoration: BoxDecoration(
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(28),
+                            child: ColoredBox(
                               color: const Color(0xFF16295C),
-                              borderRadius: BorderRadius.circular(28),
-                            ),
-                            child: const Center(
-                              child: Icon(
-                                Icons.person,
-                                size: 140,
-                                color: Color(0xFF3A5190),
+                              child: Image.memory(
+                                bytes,
+                                fit: BoxFit.cover,
+                                gaplessPlayback: true,
+                                errorBuilder: (
+                                  BuildContext context,
+                                  Object error,
+                                  StackTrace? stack,
+                                ) =>
+                                    const Center(
+                                  child: Icon(
+                                    Icons.person,
+                                    size: 140,
+                                    color: Color(0xFF3A5190),
+                                  ),
+                                ),
                               ),
                             ),
                           ),

@@ -7,10 +7,7 @@ import '../../theme/tokens.dart';
 import '../../widgets/common.dart';
 
 /// Pide el tipo de pausa. Devuelve `null` si el usuario cerró la hoja.
-Future<PauseType?> showTipoPausaSheet(
-  BuildContext context, {
-  required int mealMinutes,
-}) {
+Future<PauseType?> showTipoPausaSheet(BuildContext context) {
   return showModalBottomSheet<PauseType>(
     context: context,
     isScrollControlled: true,
@@ -36,7 +33,7 @@ Future<PauseType?> showTipoPausaSheet(
           option(
             PauseType.comida,
             Icons.restaurant_outlined,
-            'Tu horario contempla $mealMinutes min.',
+            'Tu tiempo para comer.',
           ),
           option(
             PauseType.personal,

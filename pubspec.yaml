@@ -1,7 +1,7 @@
 name: lapso_jornada
-description: App móvil de Lapso Jornada. Frontend con datos de prueba.
+description: App móvil de Lapso Jornada para iOS y Android.
 publish_to: none
-version: 0.2.0+1
+version: 0.3.0+3
 
 environment:
   sdk: ^3.5.0
@@ -11,6 +11,16 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
+  # Sesión y cola sin conexión cifradas (llavero de iOS, Keystore de Android).
+  flutter_secure_storage: ^9.2.2
+  # Una lectura de ubicación en primer plano al registrar.
+  geolocator: ^13.0.1
+  # Foto con la cámara frontal. No se usa la galería.
+  image_picker: ^1.1.2
+  # Lector de QR.
+  mobile_scanner: ^6.0.2
+  # Abrir la web de Lapso, el correo y el teléfono de contacto.
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../state/app_scope.dart';
 import '../theme/tokens.dart';
 import 'historial/historial_screen.dart';
 import 'jornada/mi_jornada_screen.dart';
@@ -13,8 +14,29 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> {
+class _HomeShellState extends State<HomeShell> with WidgetsBindingObserver {
   int _index = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// Al volver a la app se consulta de nuevo el estado de la jornada y se
+  /// envía lo que haya quedado pendiente.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      AppScope.read(context).refresh();
+    }
+  }
 
   void _go(int index) => setState(() => _index = index);
 

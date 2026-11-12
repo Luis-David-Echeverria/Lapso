@@ -50,9 +50,9 @@ class ComprobanteScreen extends StatelessWidget {
     final PauseType? pause = event.pauseType;
     final int? seq = event.seq;
     final String? hash = event.hash;
-    final bool complete = event.evidence.qrRead != false &&
-        (event.evidence.location == null || event.evidence.locationOk) &&
-        event.evidence.photoTaken != false;
+    final bool complete = event.evidence.complete &&
+        event.evidence.location != LocationResult.fuera;
+    final String center = c.centerName;
 
     return PopScope(
       canPop: !fresh,
@@ -96,10 +96,8 @@ class ComprobanteScreen extends StatelessWidget {
                                 label: 'Tipo de pausa',
                                 value: pauseLabel(pause),
                               ),
-                            InfoRow(
-                              label: 'Centro',
-                              value: c.center?.name ?? 'Sin centro',
-                            ),
+                            if (center.isNotEmpty)
+                              InfoRow(label: 'Centro', value: center),
                             if (evidence.isNotEmpty)
                               InfoRow(
                                 label: 'Evidencia',
@@ -109,9 +107,11 @@ class ComprobanteScreen extends StatelessWidget {
                                     : LapsoColors.warnText,
                               ),
                             if (event.offline)
-                              const InfoRow(
+                              InfoRow(
                                 label: 'Hora',
-                                value: 'Declarada por tu teléfono',
+                                value: event.clockSuspect
+                                    ? 'La de tu teléfono (reloj por revisar)'
+                                    : 'Declarada por tu teléfono',
                               ),
                             InfoRow(
                               label: 'Evento',

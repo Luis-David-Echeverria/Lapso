@@ -1,36 +1,68 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../config.dart';
+import '../../domain/models.dart';
+import '../../state/app_controller.dart';
+import '../../state/app_scope.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/common.dart';
+import 'texto_legal_screen.dart';
 
 /// Privacidad y ayuda. Se puede abrir sin haber iniciado sesión.
+///
+/// Reúne lo que piden las tiendas: el aviso de privacidad a la mano, qué se
+/// captura y para qué, cómo retirar el consentimiento y a quién pedir el
+/// acceso, la corrección o la eliminación de los datos.
 class PrivacidadScreen extends StatelessWidget {
   const PrivacidadScreen({super.key});
 
-  void _openLegal(BuildContext context, String title, String kind) {
+  void _openLegal(BuildContext context, String kind, String title) {
     Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (BuildContext context) =>
-            _LegalScreen(title: title, kind: kind),
+            TextoLegalScreen(kind: kind, title: title),
       ),
     );
   }
 
-  /// Contacto de soporte, cuando esté definido en `config.dart`.
-  static List<Widget> _supportRows() {
-    final List<Widget> rows = <Widget>[];
-    void add(String label, String? value) {
-      if (value != null) rows.add(InfoRow(label: label, value: value));
+  Future<void> _launch(BuildContext context, Uri uri) async {
+    bool opened = false;
+    try {
+      opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } on Exception {
+      opened = false;
     }
-
-    add('Correo de soporte', kSupportEmail);
-    add('Teléfono de soporte', kSupportPhone);
-    return rows;
+    if (!opened && context.mounted) {
+      showLapsoSnack(context, 'No se pudo abrir. Copia el dato a mano.');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final AppController c = AppScope.of(context);
+    final Organization? org = c.organization;
+    final SupportContact support = c.support;
+    final String? rightsEmail = org?.contactEmail;
+    final String? rightsPhone = org?.contactPhone;
+    final String? supportEmail = support.email;
+    final String? supportPhone = support.phone;
+
+    Widget mail(String title, String email) => NavRow(
+          icon: Icons.mail_outline,
+          title: title,
+          subtitle: email,
+          external: true,
+          onTap: () => _launch(context, Uri(scheme: 'mailto', path: email)),
+        );
+    Widget phone(String title, String number) => NavRow(
+          icon: Icons.phone_outlined,
+          title: title,
+          subtitle: number,
+          external: true,
+          onTap: () => _launch(context, Uri(scheme: 'tel', path: number)),
+        );
+
     return Scaffold(
       appBar: AppBar(title: const Text('Privacidad y ayuda')),
       body: SafeArea(
@@ -44,22 +76,23 @@ class PrivacidadScreen extends StatelessWidget {
                   _Point(
                     icon: Icons.place_outlined,
                     text: 'Tu ubicación se lee una sola vez, en el momento '
-                        'de registrar.',
+                        'de registrar. Nunca con la app cerrada.',
                   ),
                   _Point(
                     icon: Icons.photo_camera_outlined,
                     text: 'Tu foto se toma con la cámara frontal, solo al '
-                        'registrar.',
+                        'registrar. La app no usa tu galería.',
                   ),
                   _Point(
                     icon: Icons.visibility_outlined,
                     text: 'Puedes ver quién consultó tu ubicación o tus '
-                        'fotos, y con qué motivo.',
+                        'fotos.',
                   ),
                   _Point(
                     icon: Icons.toggle_on_outlined,
                     text: 'Puedes retirar tu consentimiento cuando quieras, '
-                        'en Más, en Mis datos de captura.',
+                        'en Más, en Mis datos de captura. Seguirás pudiendo '
+                        'registrar tu jornada.',
                   ),
                 ],
               ),
@@ -74,16 +107,47 @@ class PrivacidadScreen extends StatelessWidget {
                     bold: true,
                     onTap: () => _openLegal(
                       context,
+                      kLegalPrivacy,
                       'Aviso de privacidad',
-                      'privacy',
                     ),
                   ),
                   NavRow(
-                    title: 'Términos de uso',
+                    title: 'Política de conservación',
                     bold: true,
-                    onTap: () =>
-                        _openLegal(context, 'Términos de uso', 'terms'),
+                    onTap: () => _openLegal(
+                      context,
+                      kLegalRetention,
+                      'Política de conservación',
+                    ),
                   ),
+                  NavRow(
+                    title: 'Medio de registro de la jornada',
+                    bold: true,
+                    onTap: () => _openLegal(
+                      context,
+                      kLegalRecord,
+                      'Medio de registro',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            const SectionLabel('Tus datos y tu cuenta'),
+            LapsoCard(
+              child: DividedColumn(
+                children: <Widget>[
+                  const _Point(
+                    icon: Icons.manage_accounts_outlined,
+                    text: 'Tu cuenta la crea y la da de baja tu '
+                        'organización. Para pedir el acceso, la corrección '
+                        'o la eliminación de tus datos o de tu cuenta, usa '
+                        'este contacto o acude a Recursos Humanos.',
+                  ),
+                  if (rightsEmail != null)
+                    mail('Escribir sobre mis datos', rightsEmail),
+                  if (rightsPhone != null)
+                    phone('Llamar sobre mis datos', rightsPhone),
                 ],
               ),
             ),
@@ -97,14 +161,17 @@ class PrivacidadScreen extends StatelessWidget {
                     text: 'Para tu PIN, tu horario o tus registros, acude a '
                         'Recursos Humanos de tu organización.',
                   ),
-                  ..._supportRows(),
+                  if (supportEmail != null)
+                    mail('Escribir a soporte', supportEmail),
+                  if (supportPhone != null)
+                    phone('Llamar a soporte', supportPhone),
                 ],
               ),
             ),
             const SizedBox(height: 24),
             const Center(
               child: Text(
-                'Lapso Jornada · versión $kAppVersion ($kAppChannel)',
+                'Lapso Jornada · versión $kAppVersion',
                 style: LapsoText.caption,
               ),
             ),
@@ -141,45 +208,6 @@ class _Point extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// Documento legal.
-///
-/// Punto de integración: el texto lo entrega el servidor con
-/// `GET /public/legal/{kind}`. Mientras no esté conectado, se avisa que el
-/// documento no está disponible en esta versión.
-class _LegalScreen extends StatelessWidget {
-  const _LegalScreen({required this.title, required this.kind});
-
-  final String title;
-
-  /// Identificador del documento en el servidor.
-  final String kind;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: LapsoColors.surface,
-      appBar: AppBar(title: Text(title)),
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-          children: <Widget>[
-            Semantics(
-              header: true,
-              child: Text(title, style: LapsoText.heading(24)),
-            ),
-            const SizedBox(height: 16),
-            const NoticeBanner(
-              text: 'Este documento se descarga del servidor de Lapso y '
-                  'todavía no está disponible en esta versión de prueba. '
-                  'Pídelo a Recursos Humanos si lo necesitas hoy.',
-            ),
-          ],
-        ),
       ),
     );
   }

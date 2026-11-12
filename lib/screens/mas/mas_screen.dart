@@ -8,7 +8,6 @@ import '../../theme/tokens.dart';
 import '../../widgets/common.dart';
 import '../acceso/cambiar_pin_screen.dart';
 import '../web_handoff.dart';
-import 'actualizacion_screen.dart';
 import 'mis_datos_screen.dart';
 import 'privacidad_screen.dart';
 
@@ -90,7 +89,7 @@ class MasScreen extends StatelessWidget {
             _ProfileCard(
               employee: employee,
               organization: c.organization?.name ?? '',
-              center: c.center?.name ?? '',
+              center: c.centerName,
             ),
             const SizedBox(height: 20),
           ],
@@ -142,12 +141,6 @@ class MasScreen extends StatelessWidget {
                   bold: true,
                   onTap: () => _push(context, const PrivacidadScreen()),
                 ),
-                NavRow(
-                  icon: Icons.system_update_outlined,
-                  title: 'Actualización de la app',
-                  subtitle: 'Versión $kAppVersion · $kAppChannel',
-                  onTap: () => _push(context, const ActualizacionScreen()),
-                ),
               ],
             ),
           ),
@@ -163,6 +156,13 @@ class MasScreen extends StatelessWidget {
             onPressed: () => _logout(context),
           ),
           const SizedBox(height: 24),
+          const Center(
+            child: Text(
+              'Lapso Jornada · versión $kAppVersion',
+              style: LapsoText.caption,
+            ),
+          ),
+          const SizedBox(height: 12),
           Center(
             child: Image.asset(
               'assets/brand/powered-fluence.png',
@@ -270,6 +270,13 @@ class _DemoTools extends StatelessWidget {
             subtitle: 'Apágalo para ver el registro sin ubicación.',
             value: c.locationPermission,
             onChanged: c.setLocationPermission,
+          ),
+          SwitchRow(
+            title: 'Reloj del teléfono adelantado',
+            subtitle: 'Dos horas. Un registro sin conexión hecho así se '
+                'rechaza al enviarlo.',
+            value: c.phoneClockAhead,
+            onChanged: c.setPhoneClockAhead,
           ),
           NavRow(
             title: 'Adelantar el reloj 1 hora',

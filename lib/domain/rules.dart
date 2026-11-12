@@ -9,8 +9,8 @@ const int kLongSessionHours = 16;
 /// Minutos de bloqueo tras agotar los intentos de PIN.
 const int kLockMinutes = 15;
 
-/// Intentos de PIN antes del bloqueo.
-const int kMaxPinAttempts = 3;
+/// Intentos fallidos de PIN que bloquean la cuenta (lo aplica el servidor).
+const int kMaxPinAttempts = 5;
 
 bool isSameDay(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
@@ -86,10 +86,9 @@ String? validateNext(WorkStatus status, EventType type) {
       }
       return null;
     case EventType.salida:
-      if (status == WorkStatus.enPausa) {
-        return 'Para registrar tu salida, primero reanuda tu jornada.';
-      }
-      if (status != WorkStatus.enJornada) {
+      // Con una pausa abierta la salida procede: el servidor cierra la pausa
+      // en el mismo instante.
+      if (status != WorkStatus.enJornada && status != WorkStatus.enPausa) {
         return 'No tienes una jornada abierta.';
       }
       return null;
@@ -106,6 +105,29 @@ String? validateNext(WorkStatus status, EventType type) {
         return 'No tienes una pausa en curso.';
       }
       return null;
+  }
+}
+
+/// Lo que se puede registrar en [status]. Solo se usa cuando no hay
+/// respuesta del servidor (registros sin conexión); con conexión manda
+/// `allowed_actions`.
+Set<EventType> actionsFor(WorkStatus status) {
+  return <EventType>{
+    for (final EventType t in EventType.values)
+      if (validateNext(status, t) == null) t,
+  };
+}
+
+/// Estado que resulta de aplicar [type] sobre [status].
+WorkStatus applyEvent(WorkStatus status, EventType type) {
+  switch (type) {
+    case EventType.entrada:
+    case EventType.pausaFin:
+      return WorkStatus.enJornada;
+    case EventType.pausaInicio:
+      return WorkStatus.enPausa;
+    case EventType.salida:
+      return WorkStatus.terminada;
   }
 }
 
@@ -165,20 +187,72 @@ bool _isRepeatedGroup(String pin) {
   return pin == b * 2;
 }
 
-/// Agrupa registros en resúmenes por día, del más reciente al más antiguo.
+/// Resume un día a partir de sus registros. Lo usa el servidor simulado;
+/// con el servidor real los números del historial vienen ya calculados.
 DaySummary summarizeDay(DateTime day, List<TimeEvent> all, DateTime now) {
   final List<TimeEvent> events = all
       .where((TimeEvent e) => isSameDay(e.at, day))
       .toList(growable: false);
   final List<TimeEvent> shift = currentShift(events);
-  final DateTime ref = isSameDay(day, now)
-      ? now
-      : (shift.isEmpty ? day : shift.last.at);
+  final bool today = isSameDay(day, now);
+  final DateTime ref = today ? now : (shift.isEmpty ? day : shift.last.at);
+  final WorkStatus status = statusOf(shift);
+  final bool closed = status == WorkStatus.terminada;
   return DaySummary(
     day: dayOf(day),
     events: events,
-    status: statusOf(shift),
+    status: status,
     worked: workedOf(shift, ref),
     pauses: pausesOf(shift, ref),
+    start: shift.isEmpty ? null : shift.first.at,
+    end: closed ? shift.last.at : null,
+    incomplete: shift.isNotEmpty && !closed && !today,
+    canRequestCorrection: shift.isNotEmpty && !today,
   );
+}
+
+final RegExp _qrToken = RegExp(r'^[A-Za-z0-9_-]{16,64}$');
+final RegExp _qrCode = RegExp(r'^[A-Za-z0-9_-]{16}$');
+final RegExp _slug = RegExp(r'^[a-z0-9][a-z0-9-]{1,62}$');
+
+/// Interpreta el contenido de un QR de Lapso.
+///
+/// Supuesto por confirmar con backend: el QR trae una dirección cuyo último
+/// tramo de la ruta es el token y cuyo parámetro `k` es el código cambiante.
+/// También se acepta el token solo.
+QrReading? parseQrPayload(String payload) {
+  final String text = payload.trim();
+  if (text.isEmpty) return null;
+  if (_qrToken.hasMatch(text)) return QrReading(token: text);
+  final Uri? uri = Uri.tryParse(text);
+  if (uri == null || !uri.hasScheme) return null;
+  final List<String> segments =
+      uri.pathSegments.where((String s) => s.isNotEmpty).toList();
+  if (segments.isEmpty || !_qrToken.hasMatch(segments.last)) return null;
+  final String? code = uri.queryParameters['k'];
+  return QrReading(
+    token: segments.last,
+    rotatingCode: code != null && _qrCode.hasMatch(code) ? code : null,
+  );
+}
+
+/// Saca el identificador de la organización de lo que la persona escribió o
+/// pegó: el código tal cual o un enlace que lo trae al final de la ruta.
+///
+/// Supuesto por confirmar con backend: el formato del enlace.
+String? parseOrganizationCode(String input) {
+  final String text = input.trim().toLowerCase();
+  if (text.isEmpty) return null;
+  if (_slug.hasMatch(text)) return text;
+  final Uri? uri = Uri.tryParse(text);
+  if (uri == null || !uri.hasScheme) return null;
+  final String? named =
+      uri.queryParameters['tenant'] ?? uri.queryParameters['org'];
+  if (named != null && _slug.hasMatch(named)) return named;
+  final List<String> segments =
+      uri.pathSegments.where((String s) => s.isNotEmpty).toList();
+  if (segments.isNotEmpty && _slug.hasMatch(segments.last)) {
+    return segments.last;
+  }
+  return null;
 }
