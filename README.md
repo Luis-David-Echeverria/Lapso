@@ -40,6 +40,12 @@ flutter run --dart-define=LAPSO_DEMO=true     # demostración sin servidor
 
 El servidor se cambia con `--dart-define=LAPSO_SERVER=https://...`. Por omisión es `https://validacion.lapsojornada.mx`.
 
+Si el ambiente de validación pide usuario y contraseña antes de dejar pasar (candado HTTP del servidor), se le dan al compilar. No se guardan en el repositorio:
+
+```bash
+flutter run --dart-define=LAPSO_GATE_USER=usuario --dart-define=LAPSO_GATE_PASS=contraseña
+```
+
 ### Modo de demostración
 
 Con `LAPSO_DEMO=true` la app usa un servidor simulado en memoria y capturas simuladas, para revisar el diseño y los flujos sin backend. Nunca se usa en una compilación para tienda.

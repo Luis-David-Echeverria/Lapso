@@ -37,3 +37,10 @@ const double kPhotoMaxSide = 1024;
 const String kLegalPrivacy = 'AVISO_PRIVACIDAD';
 const String kLegalRetention = 'POLITICA_CONSERVACION';
 const String kLegalRecord = 'MEDIO_REGISTRO';
+
+/// Usuario y contraseña del candado HTTP (Basic) que protege el ambiente de
+/// validación. Vacíos en producción. Nunca se escriben en el código:
+///
+/// `flutter run --dart-define=LAPSO_GATE_USER=... --dart-define=LAPSO_GATE_PASS=...`
+const String kGateUser = String.fromEnvironment('LAPSO_GATE_USER');
+const String kGatePass = String.fromEnvironment('LAPSO_GATE_PASS');

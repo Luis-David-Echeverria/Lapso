@@ -104,6 +104,13 @@ class HttpLapsoApi implements LapsoApi {
         HttpHeaders.userAgentHeader,
         'LapsoJornada/$kAppVersion (${Platform.operatingSystem})',
       );
+      if (kGateUser.isNotEmpty) {
+        // Candado del ambiente de validación (no es la sesión de la persona).
+        request.headers.set(
+          HttpHeaders.authorizationHeader,
+          'Basic ${base64Encode(utf8.encode('$kGateUser:$kGatePass'))}',
+        );
+      }
       final String? cookie = _cookie;
       if (cookie != null) {
         request.headers.set(HttpHeaders.cookieHeader, '$_cookieName=$cookie');
